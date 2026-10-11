@@ -4,6 +4,7 @@ import { EditorView } from '@codemirror/view'
 import { targetKey } from '@shared/types'
 import { api } from '../api'
 import { createExtensions, runText, schemaCompartment, setErrorMark, sqlLanguage, type RunMode } from '../editor/setup'
+import { formatSql } from '../editor/format'
 import type { GhostSource } from '../editor/ghost'
 import { activeTab, useStore, type Tab } from '../store'
 
@@ -14,6 +15,9 @@ export const editorBridge = {
   view: null as EditorView | null,
   run(mode: RunMode) {
     if (this.view) runFromView(this.view, mode)
+  },
+  format() {
+    if (this.view) formatView(this.view)
   },
   focus() {
     this.view?.focus()
@@ -31,6 +35,34 @@ function runFromView(view: EditorView, mode: RunMode): boolean {
   const { sql, offset } = runText(view.state, mode)
   view.dispatch({ effects: setErrorMark.of(null) })
   void state.run(tab.id, sql, offset)
+  return true
+}
+
+/** Formats the selection, or the whole script when nothing is selected. */
+function formatView(view: EditorView): boolean {
+  const { state } = view
+  const sel = state.selection.main
+  const from = sel.empty ? 0 : sel.from
+  const to = sel.empty ? state.doc.length : sel.to
+  const source = state.sliceDoc(from, to)
+  if (!source.trim()) return true
+  let formatted: string
+  try {
+    formatted = formatSql(source)
+  } catch (e) {
+    useStore.getState().showToast(`Couldn't format: ${(e as Error).message.split('\n')[0]}`, 'error')
+    return true
+  }
+  if (sel.empty && state.doc.toString().endsWith('\n')) formatted += '\n'
+  if (formatted === source) return true
+  view.dispatch({
+    changes: { from, to, insert: formatted },
+    selection: sel.empty
+      ? { anchor: Math.min(sel.head, from + formatted.length) }
+      : { anchor: from, head: from + formatted.length },
+    userEvent: 'input.format',
+    scrollIntoView: true
+  })
   return true
 }
 
@@ -70,6 +102,7 @@ function createState(tab: Tab): EditorState {
       schema,
       ghost: ghostSource,
       onRun: runFromView,
+      onFormat: formatView,
       onChange: (text) => {
         const current = useStore.getState().activeTabId
         if (current) useStore.getState().updateTab(current, { sql: text })

@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { Plus } from 'lucide-react'
 import { api, modKey } from './api'
+import { CommandPalette } from './components/CommandPalette'
 import { ConfirmDialog } from './components/ConfirmDialog'
 import { ConfirmRunDialog } from './components/ConfirmRunDialog'
 import { ConnectionDialog } from './components/ConnectionDialog'
@@ -13,7 +14,7 @@ import { SettingsDialog } from './components/SettingsDialog'
 import { Sidebar } from './components/Sidebar'
 import { TitleBar } from './components/TitleBar'
 import { Kbd, Logo } from './components/ui'
-import { SaveErrorToast, UndoToast } from './components/UndoToast'
+import { SaveErrorToast, Toast, UndoToast } from './components/UndoToast'
 import { activeTab, useStore } from './store'
 
 function useTheme() {
@@ -42,7 +43,10 @@ function useShortcuts() {
       const s = useStore.getState()
       if (!mod) return
       const key = e.key.toLowerCase()
-      if (key === 't' && !e.shiftKey) {
+      if (key === 'k' || (key === 'p' && e.shiftKey)) {
+        e.preventDefault()
+        s.setPalette(!s.paletteOpen)
+      } else if (key === 't' && !e.shiftKey) {
         e.preventDefault()
         s.newTab()
       } else if (key === 'tab') {
@@ -126,6 +130,8 @@ export function App() {
       <ConfirmDialog />
       <UndoToast />
       <SaveErrorToast />
+      <Toast />
+      <CommandPalette />
     </div>
   )
 }

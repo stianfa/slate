@@ -1,5 +1,5 @@
 import { useEffect, useRef, type PointerEvent } from 'react'
-import { Check, ChevronDown, Database, Lock, Network, Play, PlaySquare, Sparkles } from 'lucide-react'
+import { AlignLeft, Check, ChevronDown, Database, Lock, Network, Play, PlaySquare, Sparkles } from 'lucide-react'
 import { environmentOf, targetKey } from '@shared/types'
 import { modKey } from '../api'
 import { useStore, type Tab } from '../store'
@@ -190,6 +190,9 @@ export function QueryPane({ tab }: { tab: Tab }) {
           title={`Run everything (${modKey}+Shift+Enter)`}
         >
           <PlaySquare size={15} />
+        </button>
+        <button className="icon-btn" onClick={() => editorBridge.format()} title="Format SQL (Shift+Alt+F)">
+          <AlignLeft size={15} />
         </button>
         <TransactionBadge tab={tab} />
         <div className="grow" />

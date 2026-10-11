@@ -126,6 +126,11 @@ interface State extends Workspace {
   ai: AiState
   /** A production run waiting for the user to confirm its writes. */
   pendingRun: PendingRun | null
+  paletteOpen: boolean
+  setPalette(open: boolean): void
+  /** A short message at the bottom of the window. */
+  toast: { text: string; tone: 'info' | 'error'; at: number } | null
+  showToast(text: string, tone?: 'info' | 'error'): void
   /** A question waiting in the confirmation dialog. */
   confirmation: Confirmation | null
   confirm(question: Omit<Confirmation, 'resolve'>): Promise<boolean>
@@ -223,15 +228,17 @@ const isBlank = (t: Tab) => t.kind !== 'diagram' && !t.title && !t.sql.trim() &&
 
 const withoutBlanks = (tabs: Tab[], keep: string | null) => tabs.filter((t) => t.id === keep || !isBlank(t))
 
-/** The entry's name: what the user called it, else the first line of its SQL. */
+/**
+ * The entry's name: what the user called it, else a leading comment, else the start of its SQL on
+ * one line. Using more than the first line keeps formatted SQL from being titled just "SELECT".
+ */
 export function displayTitle(tab: Pick<Tab, 'title' | 'sql' | 'kind'>): string {
   if (tab.title) return tab.title
-  const line = tab.sql
-    .split('\n')
-    .map((l) => l.trim())
-    .find((l) => l && l !== '--')
-  if (!line) return 'Untitled query'
-  return line.replace(/^--\s*/, '').replace(/\s+/g, ' ').slice(0, 80)
+  const sql = tab.sql.trim()
+  if (!sql) return 'Untitled query'
+  const comment = /^--\s*(.+)/.exec(sql)
+  if (comment) return comment[1].trim().slice(0, 80)
+  return sql.replace(/\s+/g, ' ').slice(0, 80)
 }
 
 const uid = () => Math.random().toString(36).slice(2, 10)
@@ -276,6 +283,16 @@ export const useStore = create<State>((set, get) => ({
   pendingRun: null,
   lastDeleted: null,
   confirmation: null,
+  toast: null,
+  paletteOpen: false,
+
+  setPalette(open) {
+    set({ paletteOpen: open })
+  },
+
+  showToast(text, tone = 'info') {
+    set({ toast: { text, tone, at: Date.now() } })
+  },
 
   confirm(question) {
     return new Promise<boolean>((resolve) => {

@@ -27,6 +27,24 @@ export function UndoToast() {
   )
 }
 
+/** Short-lived messages from showToast(). */
+export function Toast() {
+  const toast = useStore((s) => s.toast)
+  const [visible, setVisible] = useState(false)
+  useEffect(() => {
+    if (!toast) return
+    setVisible(true)
+    const id = setTimeout(() => setVisible(false), 4000)
+    return () => clearTimeout(id)
+  }, [toast])
+  if (!visible || !toast) return null
+  return (
+    <div className={`toast${toast.tone === 'error' ? ' error' : ''}`} role="status">
+      <span className="toast-text">{toast.text}</span>
+    </div>
+  )
+}
+
 /** Shown while the workspace can't be written to disk, so history loss is never silent. */
 export function SaveErrorToast() {
   const saveError = useStore((s) => s.saveError)

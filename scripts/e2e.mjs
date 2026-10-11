@@ -449,6 +449,38 @@ try {
     await page.locator('.history-head', { hasText: 'shop' }).waitFor()
   })
 
+  await step('format SQL', async () => {
+    await page.getByRole('button', { name: 'New query', exact: true }).click()
+    await setEditor("select id,email from users where id=:id and created_at>now()-interval '1 day'")
+    await page.keyboard.press('Shift+Alt+F')
+    await page.locator('.cm-line', { hasText: /^SELECT$/ }).waitFor()
+    const text = await page.locator('.cm-content').innerText()
+    if (!text.includes('WHERE') || !text.includes('id = :id') || !text.includes("interval '1 day'")) {
+      throw new Error(`unexpected formatting:\n${text}`)
+    }
+    await shot('21-formatted')
+  })
+
+  await step('command palette', async () => {
+    await page.keyboard.press(`${mod}+K`)
+    await page.locator('.palette').waitFor()
+    await page.keyboard.type('ordit')
+    await page.locator('.palette-item.active', { hasText: 'order_items' }).waitFor()
+    await shot('22-palette')
+    await page.keyboard.press('Enter')
+    await page.locator('.history-item.active', { hasText: 'order_items' }).waitFor()
+    await page.locator('.grid-head', { hasText: 'quantity' }).waitFor()
+
+    // The title bar button opens it too, and commands run from it.
+    await page.locator('.titlebar-search').click()
+    await page.keyboard.type('diagram')
+    await page.keyboard.press('Enter')
+    await page.locator('.dg-table[data-table="public.users"]').waitFor()
+    await page.keyboard.press(`${mod}+K`)
+    await page.keyboard.press('Escape')
+    await page.locator('.palette').waitFor({ state: 'detached' })
+  })
+
   await step('light theme', async () => {
     await page.getByRole('button', { name: 'Settings' }).click()
     await page.getByRole('button', { name: 'Light' }).click()

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { PanelLeft, Plus } from 'lucide-react'
+import { PanelLeft, Plus, Search } from 'lucide-react'
 import { isMac, modKey } from '../api'
 import { activeTab, displayTitle, useStore } from '../store'
 import { EnvBadge, useEnvironment } from './environment'
@@ -11,6 +11,7 @@ export function TitleBar() {
   const setLayout = useStore((s) => s.setLayout)
   const newTab = useStore((s) => s.newTab)
   const renameTab = useStore((s) => s.renameTab)
+  const setPalette = useStore((s) => s.setPalette)
   const environment = useEnvironment(tab?.target)
   const [editing, setEditing] = useState(false)
 
@@ -55,6 +56,12 @@ export function TitleBar() {
           {environment && <EnvBadge env={environment} />}
         </div>
       )}
+      <div className="grow" />
+      <button className="titlebar-search" onClick={() => setPalette(true)} title="Command palette">
+        <Search size={13} />
+        <span>Search</span>
+        <kbd className="kbd">{modKey}+K</kbd>
+      </button>
     </header>
   )
 }

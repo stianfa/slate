@@ -182,6 +182,7 @@ export function createExtensions(options: {
   schema: SchemaInfo | undefined
   ghost: GhostSource
   onRun(view: EditorView, mode: RunMode): boolean
+  onFormat(view: EditorView): boolean
   onChange(text: string): void
 }): Extension[] {
   return [
@@ -202,7 +203,8 @@ export function createExtensions(options: {
     Prec.highest(
       keymap.of([
         { key: 'Mod-Enter', run: (v) => options.onRun(v, 'smart') },
-        { key: 'Shift-Mod-Enter', run: (v) => options.onRun(v, 'all') }
+        { key: 'Shift-Mod-Enter', run: (v) => options.onRun(v, 'all') },
+        { key: 'Shift-Alt-f', run: (v) => options.onFormat(v) }
       ])
     ),
     keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...searchKeymap, ...historyKeymap, ...completionKeymap, indentWithTab]),
