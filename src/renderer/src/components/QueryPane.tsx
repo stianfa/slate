@@ -12,7 +12,7 @@ import { VariablesBar } from './VariablesBar'
 function TargetPicker({ tab }: { tab: Tab }) {
   const connections = useStore((s) => s.connections)
   const conn = useStore((s) => s.conn)
-  const moveTab = useStore((s) => s.moveTab)
+  const requestMove = useStore((s) => s.requestMove)
   const connect = useStore((s) => s.connect)
   const current = connections.find((c) => c.id === tab.target?.connectionId)
 
@@ -57,7 +57,7 @@ function TargetPicker({ tab }: { tab: Tab }) {
                       key={db}
                       className={`menu-item${selected ? ' selected' : ''}`}
                       onClick={() => {
-                        moveTab(tab.id, { connectionId: c.id, database: db })
+                        void requestMove(tab.id, { connectionId: c.id, database: db })
                         close()
                         editorBridge.focus()
                       }}

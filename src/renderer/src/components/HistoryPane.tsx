@@ -38,7 +38,7 @@ function preview(tab: Tab): string {
 const HistoryItem = memo(function HistoryItem({ tab, active, now }: { tab: Tab; active: boolean; now: number }) {
   const color = useStore((s) => s.connections.find((c) => c.id === tab.target?.connectionId)?.color)
   const setActiveTab = useStore((s) => s.setActiveTab)
-  const deleteTab = useStore((s) => s.deleteTab)
+  const requestDelete = useStore((s) => s.requestDelete)
   const renameTab = useStore((s) => s.renameTab)
   const [editing, setEditing] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -104,7 +104,7 @@ const HistoryItem = memo(function HistoryItem({ tab, active, now }: { tab: Tab; 
       <button
         className="history-delete"
         onMouseDown={(e) => e.stopPropagation()}
-        onClick={() => deleteTab(tab.id)}
+        onClick={() => void requestDelete(tab.id)}
         title="Delete from history"
         aria-label="Delete from history"
       >

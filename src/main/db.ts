@@ -93,6 +93,8 @@ export class DbManager {
   private typeNames = new Map<string, Promise<Map<number, string>>>()
   private schemas = new Map<string, SchemaInfo>()
   private versions = new Map<string, string>()
+  /** Queries whose connection dropped while a transaction was open, keyed by tab id. */
+  private lostTransactions = new Set<string>()
 
   constructor(private resolve: (connectionId: string) => ResolvedConnection) {}
 
@@ -301,7 +303,10 @@ export class DbManager {
     const client = new pg.Client(this.config(target))
     const session: Session = { client, target, busy: false, txStatus: 'idle', notices: [], readOnly: false }
     const drop = () => {
-      if (this.sessions.get(tabId)?.client === client) this.sessions.delete(tabId)
+      if (this.sessions.get(tabId)?.client !== client) return
+      this.sessions.delete(tabId)
+      // An unexpected drop mid-transaction means the server rolled it back; say so on the next run.
+      if (session.txStatus !== 'idle') this.lostTransactions.add(tabId)
     }
     client.on('error', drop)
     client.on('end', drop)
@@ -325,6 +330,12 @@ export class DbManager {
     options: RunOptions = { readOnly: false }
   ): Promise<RunResponse> {
     const started = performance.now()
+    if (this.lostTransactions.delete(tabId)) {
+      const message =
+        'The connection was lost while a transaction was open, so the server rolled it back. ' +
+        'Nothing ran. Run again to continue in a new session.'
+      return { results: [], error: { message }, notices: [], txStatus: 'idle', durationMs: 0 }
+    }
     let session: Session
     try {
       session = await this.session(tabId, target)
@@ -423,6 +434,11 @@ export class DbManager {
       truncated,
       durationMs: performance.now() - started
     }
+  }
+
+  /** Databases with an open (or failed) transaction, one entry per query. */
+  openTransactions(): Target[] {
+    return [...this.sessions.values()].filter((s) => s.txStatus !== 'idle').map((s) => s.target)
   }
 
   async cancel(tabId: string): Promise<void> {

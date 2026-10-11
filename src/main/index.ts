@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, ipcMain, Menu, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron'
 import { join } from 'node:path'
 import type { Api } from '@shared/api'
 import { connectionChanged } from '@shared/types'
@@ -11,6 +11,25 @@ import { Store } from './store'
 if (process.env.SLATE_USER_DATA) app.setPath('userData', process.env.SLATE_USER_DATA)
 
 let window: BrowserWindow | null = null
+let db: DbManager | null = null
+let quitConfirmed = false
+
+/** Asks before quitting would roll back open transactions. True means go ahead. */
+function confirmQuit(): boolean {
+  const open = db?.openTransactions() ?? []
+  if (quitConfirmed || open.length === 0) return true
+  const databases = [...new Set(open.map((t) => t.database))].join(', ')
+  const choice = dialog.showMessageBoxSync(window ?? undefined!, {
+    type: 'warning',
+    buttons: ['Cancel', 'Quit and roll back'],
+    defaultId: 0,
+    cancelId: 0,
+    message: open.length === 1 ? 'A transaction is still open' : `${open.length} transactions are still open`,
+    detail: `Quitting rolls back the open transactions on ${databases}. Commit them first to keep the changes.`
+  })
+  quitConfirmed = choice === 1
+  return quitConfirmed
+}
 
 const TITLE_BAR_HEIGHT = 40
 const titleBarColors = () =>
@@ -40,6 +59,10 @@ function createWindow() {
   })
 
   window.once('ready-to-show', () => window?.show())
+  // On Windows and Linux closing the window quits, so ask here while the window still exists.
+  window.on('close', (event) => {
+    if (process.platform !== 'darwin' && !confirmQuit()) event.preventDefault()
+  })
   // There is no app menu on Windows/Linux, so wire up the few shortcuts it would have provided.
   window.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown' || !window) return
@@ -72,7 +95,8 @@ function createWindow() {
 
 function registerIpc() {
   const store = new Store()
-  const db = new DbManager((id) => store.resolve(id))
+  const manager = new DbManager((id) => store.resolve(id))
+  db = manager
   const ai = new AiCompleter(
     () => store.apiKey(),
     () => store.aiModel()
@@ -85,28 +109,28 @@ function registerIpc() {
       const saved = store.saveConnection(input)
       // New credentials or host: drop open sessions so the next query reconnects with them.
       // Renaming or re-marking the environment leaves running work alone.
-      if (previous && (connectionChanged(previous, input) || input.password !== undefined)) await db.disconnect(saved.id)
+      if (previous && (connectionChanged(previous, input) || input.password !== undefined)) await manager.disconnect(saved.id)
       return saved
     },
     deleteConnection: async (id) => {
-      await db.disconnect(id)
+      await manager.disconnect(id)
       store.deleteConnection(id)
     },
     testConnection: async (input) => {
       try {
-        const version = await db.test({ ...input, password: store.passwordFor(input) })
+        const version = await manager.test({ ...input, password: store.passwordFor(input) })
         return { ok: true, message: `Connected · PostgreSQL ${version}` }
       } catch (e) {
         return { ok: false, message: e instanceof Error ? e.message : String(e) }
       }
     },
-    connect: (id) => db.connect(id),
-    disconnect: (id) => db.disconnect(id),
-    getSchema: (target, refresh) => db.schema(target, refresh),
+    connect: (id) => manager.connect(id),
+    disconnect: (id) => manager.disconnect(id),
+    getSchema: (target, refresh) => manager.schema(target, refresh),
     runQuery: (tabId, target, sql, rowLimit, variables, options) =>
-      db.run(tabId, target, sql, rowLimit, variables, options),
-    cancelQuery: (tabId) => db.cancel(tabId),
-    closeSession: (tabId) => db.closeSession(tabId),
+      manager.run(tabId, target, sql, rowLimit, variables, options),
+    cancelQuery: (tabId) => manager.cancel(tabId),
+    closeSession: (tabId) => manager.closeSession(tabId),
     getSettings: async () => store.getSettings(),
     saveSettings: async (input) => store.saveSettings(input),
     testAi: async () => {
@@ -119,10 +143,10 @@ function registerIpc() {
     },
     complete: async ({ requestId, target, prefix, suffix }) => {
       if (!store.aiEnabled()) return null
-      const schema = db.cachedSchema(target) ?? (await db.schema(target))
+      const schema = manager.cachedSchema(target) ?? (await manager.schema(target))
       const schemaText = describeSchema(schema, {
         database: target.database,
-        version: db.serverVersion(target.connectionId),
+        version: manager.serverVersion(target.connectionId),
         editorText: prefix + suffix
       })
       try {
@@ -152,7 +176,7 @@ function registerIpc() {
     })
   }
 
-  return db
+  return manager
 }
 
 // macOS needs an Edit menu for Cmd+C/V/X/A/Z to work in text fields. Reload is left out on
@@ -191,7 +215,7 @@ app.whenReady().then(() => {
   // On Windows/Linux the default menu binds Ctrl+W/Ctrl+R to closing and reloading; the app handles its own keys.
   Menu.setApplicationMenu(process.platform === 'darwin' ? macMenu() : null)
   if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(join(__dirname, '../../build/icon.png'))
-  const db = registerIpc()
+  const manager = registerIpc()
   createWindow()
 
   app.on('activate', () => {
@@ -201,10 +225,15 @@ app.whenReady().then(() => {
   let closing = false
   app.on('before-quit', (event) => {
     if (closing) return
+    // macOS keeps running after its window closes, so Cmd+Q is where open transactions are caught.
+    if (!confirmQuit()) {
+      event.preventDefault()
+      return
+    }
     closing = true
     event.preventDefault()
     // Give open sessions a moment to end cleanly so servers don't log aborted connections.
-    Promise.race([db.closeAll(), new Promise((r) => setTimeout(r, 1500))]).finally(() => app.quit())
+    Promise.race([manager.closeAll(), new Promise((r) => setTimeout(r, 1500))]).finally(() => app.quit())
   })
 })
 

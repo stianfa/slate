@@ -160,6 +160,29 @@ try {
     await page.locator('.tx-badge').waitFor({ state: 'detached' })
   })
 
+  await step('ask before an open transaction would be rolled back', async () => {
+    await setEditor('begin; select 1;')
+    await page.keyboard.press(`${mod}+Shift+Enter`)
+    await page.locator('.tx-badge', { hasText: 'Transaction open' }).waitFor()
+
+    const entry = page.locator('.history-item.active')
+    await entry.hover()
+    await entry.getByRole('button', { name: 'Delete from history' }).click()
+    await page.locator('.dialog', { hasText: 'Deleting the query rolls the transaction back' }).waitFor()
+    await shot('20-transaction-warning')
+    await page.getByRole('button', { name: 'Cancel' }).click()
+    if (!(await entry.count())) throw new Error('entry deleted despite cancel')
+
+    await page.locator('.target-btn').click()
+    await page.locator('.target-menu .menu-item', { hasText: 'scratch' }).click()
+    await page.locator('.dialog', { hasText: 'Move to scratch?' }).waitFor()
+    await page.getByRole('button', { name: 'Cancel' }).click()
+    await page.locator('.toolbar .target-db', { hasText: 'shop' }).waitFor()
+
+    await page.locator('.tx-badge').getByRole('button', { name: 'Rollback' }).click()
+    await page.locator('.tx-badge').waitFor({ state: 'detached' })
+  })
+
   await step('variables prompt for values and run', async () => {
     await setEditor('select id, email, is_admin from users\nwhere id = :user_id and is_admin = :admin;')
     await page.locator('.var', { hasText: ':user_id' }).waitFor()

@@ -80,6 +80,17 @@ export interface PendingRun {
   blocked?: string
 }
 
+export interface Confirmation {
+  title: string
+  message: string
+  confirmLabel: string
+  resolve(ok: boolean): void
+}
+
+/** Whether the entry's session holds an open or failed transaction, as of its last run. */
+export const hasOpenTransaction = (tab: Tab | undefined) =>
+  tab?.response?.txStatus === 'transaction' || tab?.response?.txStatus === 'failed'
+
 export type DialogState = { type: 'connection'; id?: string } | { type: 'settings' } | { type: 'envVariables'; suggest?: string[] } | null
 
 export interface AiState {
@@ -113,6 +124,13 @@ interface State extends Workspace {
   ai: AiState
   /** A production run waiting for the user to confirm its writes. */
   pendingRun: PendingRun | null
+  /** A question waiting in the confirmation dialog. */
+  confirmation: Confirmation | null
+  confirm(question: Omit<Confirmation, 'resolve'>): Promise<boolean>
+  /** Delete, move and disconnect, asking first when that would roll back an open transaction. */
+  requestDelete(id: string): Promise<void>
+  requestMove(id: string, target: Target): Promise<void>
+  requestDisconnect(connectionId: string): Promise<void>
 
   init(): Promise<void>
   saveConnection(input: ConnectionInput): Promise<ConnectionConfig>
@@ -227,6 +245,70 @@ export const useStore = create<State>((set, get) => ({
   ai: { status: 'idle' },
   pendingRun: null,
   lastDeleted: null,
+  confirmation: null,
+
+  confirm(question) {
+    return new Promise<boolean>((resolve) => {
+      set({
+        confirmation: {
+          ...question,
+          resolve: (ok) => {
+            set({ confirmation: null })
+            resolve(ok)
+          }
+        }
+      })
+    })
+  },
+
+  async requestDelete(id) {
+    const tab = get().tabs.find((t) => t.id === id)
+    if (!tab) return
+    if (hasOpenTransaction(tab)) {
+      const ok = await get().confirm({
+        title: 'Delete this query?',
+        message: `It has an open transaction on ${tab.target?.database}. Deleting the query rolls the transaction back.`,
+        confirmLabel: 'Roll back and delete'
+      })
+      if (!ok) return
+    }
+    get().deleteTab(id)
+  },
+
+  async requestMove(id, target) {
+    const tab = get().tabs.find((t) => t.id === id)
+    if (!tab || (tab.target && targetKey(tab.target) === targetKey(target))) return
+    if (hasOpenTransaction(tab)) {
+      const ok = await get().confirm({
+        title: `Move to ${target.database}?`,
+        message: `This query has an open transaction on ${tab.target?.database}. Moving it to ${target.database} rolls the transaction back.`,
+        confirmLabel: 'Roll back and move'
+      })
+      if (!ok) return
+      await api.closeSession(id)
+    }
+    get().moveTab(id, target)
+  },
+
+  async requestDisconnect(connectionId) {
+    const open = get().tabs.filter((t) => t.target?.connectionId === connectionId && hasOpenTransaction(t))
+    if (open.length) {
+      const databases = [...new Set(open.map((t) => t.target!.database))].join(', ')
+      const ok = await get().confirm({
+        title: 'Disconnect?',
+        message: `${open.length === 1 ? 'A transaction is' : `${open.length} transactions are`} still open on ${databases}. Disconnecting rolls ${open.length === 1 ? 'it' : 'them'} back.`,
+        confirmLabel: 'Roll back and disconnect'
+      })
+      if (!ok) return
+    }
+    await get().disconnect(connectionId)
+    // Sessions are gone, so drop the stale transaction badges.
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.target?.connectionId === connectionId && t.response ? { ...t, response: { ...t.response, txStatus: 'idle' } } : t
+      )
+    }))
+  },
 
   async init() {
     const [connections, settings] = await Promise.all([api.listConnections(), api.getSettings()])

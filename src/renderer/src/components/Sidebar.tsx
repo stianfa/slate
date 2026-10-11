@@ -257,7 +257,7 @@ function ConnectionNode({ connection }: { connection: ConnectionConfig }) {
   const state = useStore((s) => s.conn[connection.id])
   const toggle = useStore((s) => s.toggle)
   const connect = useStore((s) => s.connect)
-  const disconnect = useStore((s) => s.disconnect)
+  const requestDisconnect = useStore((s) => s.requestDisconnect)
   const setDialog = useStore((s) => s.setDialog)
   const status = state?.status ?? 'idle'
   const databases = state?.server?.databases ?? [connection.database]
@@ -292,7 +292,7 @@ function ConnectionNode({ connection }: { connection: ConnectionConfig }) {
         actions={
           <>
             {status === 'connected' ? (
-              <button className="tree-btn" title="Disconnect" onClick={() => void disconnect(connection.id)}>
+              <button className="tree-btn" title="Disconnect" onClick={() => void requestDisconnect(connection.id)}>
                 <Unplug size={12} />
               </button>
             ) : (

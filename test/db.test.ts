@@ -157,6 +157,26 @@ describe.skipIf(!up)('DbManager against the sample database', () => {
     expect(r.results[0].rows).toEqual([['1']])
   })
 
+  it('tracks open transactions and reports one lost with its connection', async () => {
+    await db.run('t11', target, 'begin', 100)
+    expect(db.openTransactions()).toContainEqual(target)
+    const pid = (await db.run('t11', target, 'select pg_backend_pid()', 100)).results[0].rows[0][0]
+
+    // Kill the session's server process from outside, as a network drop or server restart would.
+    const killer = new pg.Client({ host: 'localhost', port, user: 'slate', password: 'slate', database: 'shop' })
+    await killer.connect()
+    await killer.query('select pg_terminate_backend($1)', [pid])
+    await killer.end()
+    await new Promise((r) => setTimeout(r, 300))
+
+    let r = await db.run('t11', target, 'select 1', 100)
+    expect(r.error?.message).toContain('rolled it back')
+    expect(r.results).toHaveLength(0)
+    r = await db.run('t11', target, 'select 1', 100)
+    expect(r.error).toBeNull()
+    expect(db.openTransactions()).not.toContainEqual(target)
+  })
+
   it('switches database when the tab target changes', async () => {
     const r = await db.run('t6', { connectionId: 'local', database: 'scratch' }, 'select current_database()', 100)
     expect(r.results[0].rows).toEqual([['scratch']])

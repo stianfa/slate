@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { Plus } from 'lucide-react'
 import { api, modKey } from './api'
+import { ConfirmDialog } from './components/ConfirmDialog'
 import { ConfirmRunDialog } from './components/ConfirmRunDialog'
 import { ConnectionDialog } from './components/ConnectionDialog'
 import { DiagramView } from './components/DiagramView'
@@ -122,6 +123,7 @@ export function App() {
       {dialog?.type === 'settings' && <SettingsDialog />}
       {dialog?.type === 'envVariables' && <EnvVariablesDialog suggest={dialog.suggest} />}
       <ConfirmRunDialog />
+      <ConfirmDialog />
       <UndoToast />
     </div>
   )
