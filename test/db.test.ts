@@ -1,4 +1,7 @@
 // Runs against the sample database from `npm run db`; skipped when it isn't running.
+import { mkdtempSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import pg from 'pg'
 import { DbManager } from '../src/main/db'
@@ -175,6 +178,17 @@ describe.skipIf(!up)('DbManager against the sample database', () => {
     r = await db.run('t11', target, 'select 1', 100)
     expect(r.error).toBeNull()
     expect(db.openTransactions()).not.toContainEqual(target)
+  })
+
+  it('streams every row of a statement to CSV', async () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'slate-export-')), 'users.csv')
+    const rows = await db.exportCsv(target, 'select id, is_admin, settings from users where id <= :n order by id', { n: '1500' }, file)
+    expect(rows).toBe(1500)
+    const lines = readFileSync(file, 'utf8').trimEnd().split('\n')
+    expect(lines).toHaveLength(1501)
+    expect(lines[0]).toBe('id,is_admin,settings')
+    // Booleans read as true/false and JSON with quotes is escaped.
+    expect(lines[1]).toBe('1,false,"{""beta"": false, ""theme"": ""light""}"')
   })
 
   it('switches database when the tab target changes', async () => {

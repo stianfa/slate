@@ -2375,3 +2375,9 @@ select {
 .error-card .btn {
   margin-top: 12px;
 }
+
+.menu-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 2px;
+}

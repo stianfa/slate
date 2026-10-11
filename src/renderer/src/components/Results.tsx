@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { AlertCircle, Check, ChevronDown, Copy, Info, Square, Unlock } from 'lucide-react'
+import { AlertCircle, Check, ChevronDown, Copy, Download, Info, Square, Unlock } from 'lucide-react'
+import { isReadOnly } from '@shared/sql'
 import type { ResultField } from '@shared/types'
 import { api, modKey } from '../api'
 import { formatDuration, lineCol, prettyValue, summarize, toCsv, toJson, toMarkdown } from '../lib/format'
@@ -20,18 +21,28 @@ function Elapsed({ since }: { since: number }) {
   return <>{formatDuration(now - since)}</>
 }
 
-function CopyMenu({ onCopy }: { onCopy(format: 'csv' | 'json' | 'markdown'): void }) {
+function CopyMenu({ onCopy, onSave }: { onCopy(format: 'csv' | 'json' | 'markdown'): void; onSave(): void }) {
   return (
     <Popover
       align="right"
       trigger={(open, toggle) => (
         <button className={`ghost-btn${open ? ' active' : ''}`} onClick={toggle}>
-          <Copy size={13} /> Copy as <ChevronDown size={12} />
+          <Copy size={13} /> Export <ChevronDown size={12} />
         </button>
       )}
     >
       {(close) => (
         <div className="menu">
+          <button
+            className="menu-item"
+            onClick={() => {
+              onSave()
+              close()
+            }}
+          >
+            <Download size={13} className="muted" /> Save as CSV file…
+          </button>
+          <div className="menu-sep" />
           {(['csv', 'json', 'markdown'] as const).map((f) => (
             <button
               key={f}
@@ -41,7 +52,7 @@ function CopyMenu({ onCopy }: { onCopy(format: 'csv' | 'json' | 'markdown'): voi
                 close()
               }}
             >
-              {f === 'csv' ? 'CSV' : f === 'json' ? 'JSON' : 'Markdown table'}
+              {f === 'csv' ? 'Copy as CSV' : f === 'json' ? 'Copy as JSON' : 'Copy as Markdown table'}
             </button>
           ))}
         </div>
@@ -53,7 +64,11 @@ function CopyMenu({ onCopy }: { onCopy(format: 'csv' | 'json' | 'markdown'): voi
 export function Results({ tab }: { tab: Tab }) {
   const updateTab = useStore((s) => s.updateTab)
   const cancel = useStore((s) => s.cancel)
+  const settings = useStore((s) => s.settings)
   const retryWithWrites = useStore((s) => s.retryWithWrites)
+  const loadMore = useStore((s) => s.loadMore)
+  const exportResult = useStore((s) => s.exportResult)
+  const [saving, setSaving] = useState(false)
   const environment = useEnvironment(tab.target)
   const [viewing, setViewing] = useState<{ value: string; field: ResultField } | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
@@ -67,8 +82,24 @@ export function Results({ tab }: { tab: Tab }) {
     if (!result) return
     const text = format === 'csv' ? toCsv(result) : format === 'json' ? toJson(result) : toMarkdown(result)
     await api.copyText(text)
-    setCopied(format.toUpperCase())
-    setTimeout(() => setCopied(null), 1400)
+    flash(`Copied ${format.toUpperCase()}`)
+  }
+
+  const flash = (message: string) => {
+    setCopied(message)
+    setTimeout(() => setCopied(null), 2500)
+  }
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      const message = await exportResult(tab.id, tab.activeResult ?? 0)
+      if (message) flash(message)
+    } catch (e) {
+      flash(`Couldn't save: ${(e as Error).message}`)
+    } finally {
+      setSaving(false)
+    }
   }
 
   let body
@@ -189,9 +220,18 @@ export function Results({ tab }: { tab: Tab }) {
               <span className="strong">{summarize(result)}</span>
               <span className="muted">· {formatDuration(response!.durationMs)}</span>
               {result.truncated && (
-                <span className="pill" title="Raise the row limit in Settings to fetch more">
+                <span className="pill" title="Results stop at the row limit (Settings)">
                   row limit
                 </span>
+              )}
+              {result.truncated && isReadOnly(result.statement) && (
+                <button
+                  className="ghost-btn"
+                  onClick={() => void loadMore(tab.id, tab.activeResult ?? 0)}
+                  title="Run the statement again with room for more rows"
+                >
+                  Load {(settings?.rowLimit ?? 1000).toLocaleString('en-US')} more
+                </button>
               )}
             </>
           ) : null}
@@ -204,8 +244,9 @@ export function Results({ tab }: { tab: Tab }) {
           )}
           {!tab.running && result && result.fields.length > 0 && (
             <>
-              {copied && <span className="copied">Copied {copied}</span>}
-              <CopyMenu onCopy={(f) => void copy(f)} />
+              {saving && <Spinner />}
+              {copied && <span className="copied">{copied}</span>}
+              <CopyMenu onCopy={(f) => void copy(f)} onSave={() => void save()} />
             </>
           )}
         </div>

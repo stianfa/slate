@@ -1,4 +1,5 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron'
+import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { SAVE_WORKSPACE_NOW, type Api } from '@shared/api'
 import { connectionChanged } from '@shared/types'
@@ -93,6 +94,15 @@ function createWindow() {
   else window.loadFile(join(__dirname, '../renderer/index.html'))
 }
 
+async function askSavePath(defaultName: string): Promise<string | null> {
+  const options = {
+    defaultPath: join(app.getPath('downloads'), defaultName),
+    filters: [{ name: 'CSV', extensions: ['csv'] }]
+  }
+  const { canceled, filePath } = window ? await dialog.showSaveDialog(window, options) : await dialog.showSaveDialog(options)
+  return canceled || !filePath ? null : filePath
+}
+
 function registerIpc() {
   const store = new Store()
   const manager = new DbManager((id) => store.resolve(id))
@@ -157,6 +167,17 @@ function registerIpc() {
     },
     cancelCompletion: async (requestId) => ai.cancel(requestId),
     copyText: async (text) => clipboard.writeText(text),
+    saveFile: async (defaultName, content) => {
+      const path = await askSavePath(defaultName)
+      if (!path) return null
+      writeFileSync(path, content)
+      return path
+    },
+    exportQuery: async (target, statement, variables, defaultName) => {
+      const path = await askSavePath(defaultName)
+      if (!path) return null
+      return { path, rows: await manager.exportCsv(target, statement, variables, path) }
+    },
     loadWorkspace: async () => store.loadWorkspace(),
     saveWorkspace: async (json) => store.saveWorkspace(json),
     setTitleBarColors: async ({ background, symbols }) => {

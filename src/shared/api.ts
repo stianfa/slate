@@ -38,6 +38,15 @@ export interface Api {
   complete(request: CompletionRequest): Promise<string | null>
   cancelCompletion(requestId: string): Promise<void>
   copyText(text: string): Promise<void>
+  /** Asks where to save, then writes the text there. Null if the user cancelled. */
+  saveFile(defaultName: string, content: string): Promise<string | null>
+  /** Asks where to save, then streams every row of a read-only statement to CSV. */
+  exportQuery(
+    target: Target,
+    statement: string,
+    variables: VariableValues,
+    defaultName: string
+  ): Promise<{ path: string; rows: number } | null>
   /** The saved workspace (history and layout) as JSON, or null on first start. */
   loadWorkspace(): Promise<string | null>
   saveWorkspace(json: string): Promise<void>
@@ -61,6 +70,8 @@ export const API_METHODS: (keyof Api)[] = [
   'complete',
   'cancelCompletion',
   'copyText',
+  'saveFile',
+  'exportQuery',
   'loadWorkspace',
   'saveWorkspace',
   'setTitleBarColors'

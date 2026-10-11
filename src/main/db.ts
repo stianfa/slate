@@ -1,3 +1,4 @@
+import { createWriteStream, type WriteStream } from 'node:fs'
 import pg from 'pg'
 import Cursor from 'pg-cursor'
 import { leadingKeyword, splitStatements, type Statement } from '@shared/sql'
@@ -71,6 +72,21 @@ function baseConfig(c: Omit<ConnectionInput, 'password'>, password: string | nul
     connectionTimeoutMillis: 10_000,
     keepAlive: true
   }
+}
+
+const EXPORT_BATCH = 5000
+const BOOL_TYPE = 16
+
+const csvCell = (v: string) => (/[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v)
+
+function readBatch(cursor: Cursor<(string | null)[]>, size: number) {
+  return new Promise<{ rows: (string | null)[][]; result: pg.QueryResult }>((resolve, reject) => {
+    cursor.read(size, (err, rows, result) => (err ? reject(err) : resolve({ rows, result })))
+  })
+}
+
+function write(out: WriteStream, chunk: string) {
+  return new Promise<void>((resolve, reject) => out.write(chunk, (err) => (err ? reject(err) : resolve())))
 }
 
 function toQueryError(e: unknown, statement: Statement | null, bound?: BoundStatement): QueryError {
@@ -434,6 +450,50 @@ export class DbManager {
       truncated,
       durationMs: performance.now() - started
     }
+  }
+
+  /**
+   * Streams every row of a read-only statement into a CSV file. Runs on its own read-only
+   * connection in batches, so a big table never sits in memory or blocks the query's session.
+   */
+  async exportCsv(target: Target, statement: string, variables: VariableValues, file: string): Promise<number> {
+    const bound = bindVariables(statement, variables)
+    if (bound.missing.length) throw new Error(`No value for ${bound.missing.join(', ')}.`)
+    const client = await this.pool(target).connect()
+    const out = createWriteStream(file)
+    let count = 0
+    try {
+      await client.query('BEGIN READ ONLY')
+      const cursor = client.query(new Cursor<(string | null)[]>(bound.text, undefined, { rowMode: 'array', types: rawTypes }))
+      let bools: boolean[] | null = null
+      for (;;) {
+        const { rows, result } = await readBatch(cursor, EXPORT_BATCH)
+        if (!bools) {
+          const fields = result?.fields ?? []
+          bools = fields.map((f) => f.dataTypeID === BOOL_TYPE)
+          await write(out, fields.map((f) => csvCell(f.name)).join(',') + '\n')
+        }
+        let chunk = ''
+        for (const row of rows) {
+          chunk +=
+            row
+              .map((v, i) => (v === null ? '' : csvCell(bools![i] ? (v === 't' ? 'true' : v === 'f' ? 'false' : v) : v)))
+              .join(',') + '\n'
+        }
+        if (chunk) await write(out, chunk)
+        count += rows.length
+        if (rows.length < EXPORT_BATCH) break
+      }
+      await cursor.close()
+      await client.query('COMMIT')
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => {})
+      throw e
+    } finally {
+      client.release()
+      await new Promise<void>((resolve) => out.end(resolve))
+    }
+    return count
   }
 
   /** Databases with an open (or failed) transaction, one entry per query. */

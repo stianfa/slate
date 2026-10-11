@@ -24,7 +24,7 @@ import {
   type Target
 } from '@shared/types'
 import { api } from './api'
-import { summarize } from './lib/format'
+import { summarize, toCsv } from './lib/format'
 
 export type ConnStatus = 'idle' | 'connecting' | 'connected' | 'error'
 
@@ -160,6 +160,10 @@ interface State extends Workspace {
   run(tabId: string, sql: string, offset: number, confirmed?: boolean): Promise<void>
   confirmRun(): void
   cancelRun(): void
+  /** Re-runs a cut-off read-only result with room for another batch of rows. */
+  loadMore(tabId: string, index: number): Promise<void>
+  /** Saves a result as CSV: every row when it can be re-read safely, else the rows on screen. Returns a status line. */
+  exportResult(tabId: string, index: number): Promise<string | null>
   /** After Postgres blocked a write on a read-only production session, ask to run it again with writes allowed. */
   retryWithWrites(tabId: string): void
   setDatabaseEnvironment(connectionId: string, database: string, environment: Environment | 'none' | null): Promise<void>
@@ -555,6 +559,49 @@ export const useStore = create<State>((set, get) => ({
 
   cancelRun() {
     set({ pendingRun: null })
+  },
+
+  async loadMore(tabId, index) {
+    const tab = get().tabs.find((t) => t.id === tabId)
+    const result = tab?.response?.results[index]
+    if (!tab?.target || !tab.response || !result?.truncated || tab.running || !isReadOnly(result.statement)) return
+    const target = tab.target
+    const environment = environmentOf(get().connections.find((c) => c.id === target.connectionId), target.database)
+    const { values } = resolveVariables(tab.variables, environment ? get().settings?.environmentVariables[environment.id] : undefined)
+    const limit = result.rows.length + (get().settings?.rowLimit ?? 1000)
+    get().updateTab(tabId, { running: true, runStartedAt: Date.now() })
+    let response: RunResponse
+    try {
+      response = await api.runQuery(tabId, target, result.statement, limit, values, { readOnly: environment?.id === 'production' })
+    } catch (e) {
+      response = { results: [], error: { message: (e as Error).message }, notices: [], txStatus: 'idle', durationMs: 0 }
+    }
+    const current = get().tabs.find((t) => t.id === tabId)?.response
+    if (!current) return get().updateTab(tabId, { running: false })
+    const results = [...current.results]
+    if (response.results[0]) results[index] = response.results[0]
+    get().updateTab(tabId, {
+      running: false,
+      response: { ...current, results, error: response.error ?? current.error, txStatus: response.txStatus },
+      activeResult: response.error ? results.length : index
+    })
+  },
+
+  async exportResult(tabId, index) {
+    const tab = get().tabs.find((t) => t.id === tabId)
+    const result = tab?.response?.results[index]
+    if (!tab?.target || !result) return null
+    const name = `${displayTitle(tab).replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 60) || 'result'}.csv`
+    const count = (n: number) => `${n.toLocaleString('en-US')} ${n === 1 ? 'row' : 'rows'}`
+    if (result.truncated && isReadOnly(result.statement)) {
+      const environment = environmentOf(get().connections.find((c) => c.id === tab.target!.connectionId), tab.target.database)
+      const { values } = resolveVariables(tab.variables, environment ? get().settings?.environmentVariables[environment.id] : undefined)
+      const saved = await api.exportQuery(tab.target, result.statement, values, name)
+      return saved ? `Saved ${count(saved.rows)}` : null
+    }
+    const path = await api.saveFile(name, toCsv(result))
+    if (!path) return null
+    return result.truncated ? `Saved the first ${count(result.rows.length)}` : `Saved ${count(result.rows.length)}`
   },
 
   retryWithWrites(tabId) {

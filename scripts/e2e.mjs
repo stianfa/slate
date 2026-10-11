@@ -2,7 +2,7 @@
 // The Anthropic API is replaced by a local mock via ANTHROPIC_BASE_URL, so no key is needed.
 // Screenshots land in test-results/e2e.
 import { createServer } from 'node:http'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
@@ -136,6 +136,28 @@ try {
     const value = await page.locator('.value-view').textContent()
     if (!value.includes('\n  "beta"')) throw new Error(`json not pretty printed: ${value}`)
     await page.keyboard.press('Escape')
+  })
+
+  await step('load more rows and save the full result', async () => {
+    await setEditor('select * from orders order by id;')
+    await page.keyboard.press(`${mod}+Enter`)
+    await page.locator('.results-summary', { hasText: 'First 1,000 rows' }).waitFor()
+    await page.getByRole('button', { name: 'Load 1,000 more' }).click()
+    await page.locator('.results-summary', { hasText: 'First 2,000 rows' }).waitFor()
+
+    // Answer the save dialog in the main process instead of on screen.
+    await app.evaluate(({ dialog }, dir) => {
+      dialog.showSaveDialog = async (...args) => {
+        const options = args.at(-1)
+        return { canceled: false, filePath: `${dir}/${options.defaultPath.split(/[\\/]/).pop()}` }
+      }
+    }, downloads)
+    await page.getByRole('button', { name: 'Export' }).click()
+    await page.getByRole('button', { name: 'Save as CSV file…' }).click()
+    await page.locator('.copied', { hasText: 'Saved 5,000 rows' }).waitFor()
+    const csv = readdirSync(downloads).find((f) => f.endsWith('.csv'))
+    const file = readFileSync(join(downloads, csv), 'utf8')
+    if (file.trimEnd().split('\n').length !== 5001) throw new Error('export is missing rows')
   })
 
   await step('show errors with their position', async () => {
