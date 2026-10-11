@@ -38,6 +38,9 @@ export interface Api {
   complete(request: CompletionRequest): Promise<string | null>
   cancelCompletion(requestId: string): Promise<void>
   copyText(text: string): Promise<void>
+  /** The saved workspace (history and layout) as JSON, or null on first start. */
+  loadWorkspace(): Promise<string | null>
+  saveWorkspace(json: string): Promise<void>
   setTitleBarColors(colors: { background: string; symbols: string }): Promise<void>
 }
 
@@ -58,10 +61,16 @@ export const API_METHODS: (keyof Api)[] = [
   'complete',
   'cancelCompletion',
   'copyText',
+  'loadWorkspace',
+  'saveWorkspace',
   'setTitleBarColors'
 ]
 
 export interface Bridge {
   api: Api
   platform: string
+  /** Synchronous save for the window's last moments, when an async call may never finish. */
+  saveWorkspaceNow(json: string): void
 }
+
+export const SAVE_WORKSPACE_NOW = 'saveWorkspaceNow'

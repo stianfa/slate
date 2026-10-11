@@ -26,3 +26,14 @@ export function UndoToast() {
     </div>
   )
 }
+
+/** Shown while the workspace can't be written to disk, so history loss is never silent. */
+export function SaveErrorToast() {
+  const saveError = useStore((s) => s.saveError)
+  if (!saveError) return null
+  return (
+    <div className="toast error" role="alert">
+      <span className="toast-text">Couldn&rsquo;t save your history: {saveError}</span>
+    </div>
+  )
+}

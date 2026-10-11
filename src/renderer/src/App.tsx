@@ -13,7 +13,7 @@ import { SettingsDialog } from './components/SettingsDialog'
 import { Sidebar } from './components/Sidebar'
 import { TitleBar } from './components/TitleBar'
 import { Kbd, Logo } from './components/ui'
-import { UndoToast } from './components/UndoToast'
+import { SaveErrorToast, UndoToast } from './components/UndoToast'
 import { activeTab, useStore } from './store'
 
 function useTheme() {
@@ -125,6 +125,7 @@ export function App() {
       <ConfirmRunDialog />
       <ConfirmDialog />
       <UndoToast />
+      <SaveErrorToast />
     </div>
   )
 }

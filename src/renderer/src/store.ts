@@ -114,6 +114,8 @@ interface Workspace {
 
 interface State extends Workspace {
   ready: boolean
+  /** Set when the workspace could not be written to disk. */
+  saveError: string | null
   connections: ConnectionConfig[]
   conn: Record<string, ConnState>
   schemas: Record<string, SchemaState>
@@ -172,22 +174,24 @@ interface State extends Workspace {
   setLayout(patch: Partial<Pick<Workspace, 'sidebarWidth' | 'editorRatio' | 'historyWidth' | 'historyOpen'>>): void
 }
 
-const WORKSPACE_KEY = 'slate:workspace'
+// Where the workspace lived before it moved to a file; read once to migrate.
+const LEGACY_WORKSPACE_KEY = 'slate:workspace'
 
-function loadWorkspace(): Workspace {
-  const fallback: Workspace = {
-    tabs: [],
-    activeTabId: null,
-    currentTarget: null,
-    expanded: {},
-    sidebarWidth: 264,
-    historyWidth: 248,
-    historyOpen: true,
-    editorRatio: 0.45
-  }
+const DEFAULT_WORKSPACE: Workspace = {
+  tabs: [],
+  activeTabId: null,
+  currentTarget: null,
+  expanded: {},
+  sidebarWidth: 264,
+  historyWidth: 248,
+  historyOpen: true,
+  editorRatio: 0.45
+}
+
+function parseWorkspace(raw: string | null): Workspace {
+  const fallback = DEFAULT_WORKSPACE
   try {
-    const raw = localStorage.getItem(WORKSPACE_KEY)
-    const saved = raw ? { ...fallback, ...(JSON.parse(raw) as Partial<Workspace>) } : fallback
+    const saved = raw ? { ...fallback, ...(JSON.parse(raw) as Partial<Workspace>) } : { ...fallback }
     // Entries saved before the history existed: keep their order, drop "Query 3"-style names.
     const now = Date.now()
     saved.tabs = saved.tabs.map((t, i) => ({
@@ -230,12 +234,34 @@ const uid = () => Math.random().toString(36).slice(2, 10)
 
 const SCHEMA_CHANGING = new Set(['CREATE', 'ALTER', 'DROP', 'COMMIT', 'END', 'COMMENT', 'TRUNCATE'])
 
-const initial = loadWorkspace()
+function serializeWorkspace(s: State): string {
+  const workspace: Workspace = {
+    tabs: s.tabs.map(({ id, kind, title, sql, target, variables, createdAt, touchedAt, lastRun }) => ({
+      id,
+      kind,
+      title,
+      sql,
+      target,
+      variables,
+      createdAt,
+      touchedAt,
+      lastRun
+    })),
+    activeTabId: s.activeTabId,
+    currentTarget: s.currentTarget,
+    expanded: s.expanded,
+    sidebarWidth: s.sidebarWidth,
+    historyWidth: s.historyWidth,
+    historyOpen: s.historyOpen,
+    editorRatio: s.editorRatio
+  }
+  return JSON.stringify(workspace)
+}
 
 export const useStore = create<State>((set, get) => ({
-  ...initial,
-  tabs: initial.tabs,
+  ...DEFAULT_WORKSPACE,
   ready: false,
+  saveError: null,
   connections: [],
   conn: {},
   schemas: {},
@@ -311,7 +337,21 @@ export const useStore = create<State>((set, get) => ({
   },
 
   async init() {
-    const [connections, settings] = await Promise.all([api.listConnections(), api.getSettings()])
+    const [connections, settings, stored] = await Promise.all([
+      api.listConnections(),
+      api.getSettings(),
+      api.loadWorkspace()
+    ])
+    // First start after the move to a file: bring over what local storage held.
+    let legacy: string | null = null
+    if (stored === null) {
+      try {
+        legacy = localStorage.getItem(LEGACY_WORKSPACE_KEY)
+      } catch {
+        // Unavailable storage just means there is nothing to migrate.
+      }
+    }
+    set(parseWorkspace(stored ?? legacy))
     // Drop tabs that point at connections which no longer exist.
     const ids = new Set(connections.map((c) => c.id))
     const tabs = get().tabs.map((t) => (t.target && !ids.has(t.target.connectionId) ? { ...t, target: null } : t))
@@ -320,6 +360,14 @@ export const useStore = create<State>((set, get) => ({
     if (currentTarget && !ids.has(currentTarget.connectionId)) currentTarget = null
     currentTarget ??= active?.target ?? null
     set({ connections, settings, tabs, currentTarget, ready: true })
+    if (legacy !== null) {
+      await api.saveWorkspace(serializeWorkspace(get()))
+      try {
+        localStorage.removeItem(LEGACY_WORKSPACE_KEY)
+      } catch {
+        // Harmless: it is ignored once workspace.json exists.
+      }
+    }
     if (currentTarget) get().selectDatabase(currentTarget)
     else if (connections.length > 0) get().selectDatabase({ connectionId: connections[0].id, database: connections[0].database })
   },
@@ -669,37 +717,37 @@ export const useStore = create<State>((set, get) => ({
   }
 }))
 
-// Persist the workspace (tabs, layout, tree state) whenever it changes.
+// Persist the workspace (history, layout, tree state) to workspace.json whenever it changes.
+// Nothing is written until init() has loaded the saved one, so it is never overwritten with defaults.
 let saveTimer: ReturnType<typeof setTimeout> | undefined
-useStore.subscribe((s) => {
+let lastSaved = ''
+
+async function saveWorkspace() {
   clearTimeout(saveTimer)
-  saveTimer = setTimeout(() => {
-    const workspace: Workspace = {
-      tabs: s.tabs.map(({ id, kind, title, sql, target, variables, createdAt, touchedAt, lastRun }) => ({
-        id,
-        kind,
-        title,
-        sql,
-        target,
-        variables,
-        createdAt,
-        touchedAt,
-        lastRun
-      })),
-      activeTabId: s.activeTabId,
-      currentTarget: s.currentTarget,
-      expanded: s.expanded,
-      sidebarWidth: s.sidebarWidth,
-      historyWidth: s.historyWidth,
-      historyOpen: s.historyOpen,
-      editorRatio: s.editorRatio
-    }
-    try {
-      localStorage.setItem(WORKSPACE_KEY, JSON.stringify(workspace))
-    } catch {
-      // Storage full or unavailable; the workspace just won't be restored.
-    }
-  }, 300)
+  const state = useStore.getState()
+  if (!state.ready) return
+  const json = serializeWorkspace(state)
+  if (json === lastSaved) return
+  try {
+    await api.saveWorkspace(json)
+    lastSaved = json
+    if (state.saveError) useStore.setState({ saveError: null })
+  } catch (e) {
+    useStore.setState({ saveError: (e as Error).message })
+  }
+}
+
+useStore.subscribe(() => {
+  clearTimeout(saveTimer)
+  saveTimer = setTimeout(() => void saveWorkspace(), 800)
+})
+
+// A save still waiting in the debounce goes out synchronously when the window closes.
+window.addEventListener('beforeunload', () => {
+  const state = useStore.getState()
+  if (!state.ready) return
+  const json = serializeWorkspace(state)
+  if (json !== lastSaved) window.slate.saveWorkspaceNow(json)
 })
 
 export const activeTab = (s: State) => s.tabs.find((t) => t.id === s.activeTabId) ?? null

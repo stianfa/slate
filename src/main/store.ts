@@ -60,6 +60,7 @@ function writeJson(file: string, value: unknown) {
 export class Store {
   private connectionsFile = join(app.getPath('userData'), 'connections.json')
   private settingsFile = join(app.getPath('userData'), 'settings.json')
+  private workspaceFile = join(app.getPath('userData'), 'workspace.json')
   private connections: StoredConnection[] = readJson(this.connectionsFile, [])
   private settings: StoredSettings = { ...DEFAULT_SETTINGS, ...readJson(this.settingsFile, {}) }
 
@@ -124,6 +125,22 @@ export class Store {
     this.settings = next
     writeJson(this.settingsFile, next)
     return this.getSettings()
+  }
+
+  loadWorkspace(): string | null {
+    try {
+      return readFileSync(this.workspaceFile, 'utf8')
+    } catch {
+      return null
+    }
+  }
+
+  /** Written to a temporary file first, so a crash mid-write never leaves half a workspace. */
+  saveWorkspace(json: string) {
+    JSON.parse(json)
+    const tmp = `${this.workspaceFile}.tmp`
+    writeFileSync(tmp, json)
+    renameSync(tmp, this.workspaceFile)
   }
 
   apiKey(): string | null {

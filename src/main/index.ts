@@ -1,6 +1,6 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron'
 import { join } from 'node:path'
-import type { Api } from '@shared/api'
+import { SAVE_WORKSPACE_NOW, type Api } from '@shared/api'
 import { connectionChanged } from '@shared/types'
 import { AiCompleter, describeAiError } from './ai'
 import { DbManager } from './db'
@@ -157,6 +157,8 @@ function registerIpc() {
     },
     cancelCompletion: async (requestId) => ai.cancel(requestId),
     copyText: async (text) => clipboard.writeText(text),
+    loadWorkspace: async () => store.loadWorkspace(),
+    saveWorkspace: async (json) => store.saveWorkspace(json),
     setTitleBarColors: async ({ background, symbols }) => {
       if (process.platform !== 'darwin') {
         window?.setTitleBarOverlay({ color: background, symbolColor: symbols, height: TITLE_BAR_HEIGHT })
@@ -175,6 +177,15 @@ function registerIpc() {
       }
     })
   }
+
+  ipcMain.on(SAVE_WORKSPACE_NOW, (event, json: string) => {
+    try {
+      store.saveWorkspace(json)
+      event.returnValue = true
+    } catch {
+      event.returnValue = false
+    }
+  })
 
   return manager
 }

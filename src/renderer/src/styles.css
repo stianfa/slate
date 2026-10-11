@@ -481,6 +481,11 @@ select {
   white-space: nowrap;
 }
 
+.toast.error {
+  border-color: color-mix(in srgb, var(--red) 40%, transparent);
+  color: var(--red);
+}
+
 .toast-action {
   padding: 4px 10px;
   border-radius: 6px;

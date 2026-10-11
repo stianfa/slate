@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { API_METHODS, type Api, type Bridge } from '@shared/api'
+import { API_METHODS, SAVE_WORKSPACE_NOW, type Api, type Bridge } from '@shared/api'
 
 const api = Object.fromEntries(
   API_METHODS.map((name) => [
@@ -12,5 +12,9 @@ const api = Object.fromEntries(
   ])
 ) as unknown as Api
 
-const bridge: Bridge = { api, platform: process.platform }
+const bridge: Bridge = {
+  api,
+  platform: process.platform,
+  saveWorkspaceNow: (json) => ipcRenderer.sendSync(SAVE_WORKSPACE_NOW, json)
+}
 contextBridge.exposeInMainWorld('slate', bridge)

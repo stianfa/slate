@@ -47,23 +47,28 @@ const mockUrl = `http://127.0.0.1:${mock.address().port}`
 
 const userData = mkdtempSync(join(tmpdir(), 'slate-e2e-'))
 const downloads = mkdtempSync(join(tmpdir(), 'slate-e2e-downloads-'))
-const app = await _electron.launch({
-  // SLATE_EXE runs the suite against a packaged build, e.g. dist/win-unpacked/Slate.exe.
-  executablePath: process.env.SLATE_EXE || electronPath,
-  args: process.env.SLATE_EXE ? [] : ['.'],
-  env: {
-    ...process.env,
-    SLATE_USER_DATA: userData,
-    ANTHROPIC_BASE_URL: mockUrl,
-    ANTHROPIC_API_KEY: 'test-key',
-    ELECTRON_RENDERER_URL: ''
-  }
-})
-
-const page = await app.firstWindow()
 const errors = []
-page.on('pageerror', (e) => errors.push(e.message))
-page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
+
+async function launch() {
+  const app = await _electron.launch({
+    // SLATE_EXE runs the suite against a packaged build, e.g. dist/win-unpacked/Slate.exe.
+    executablePath: process.env.SLATE_EXE || electronPath,
+    args: process.env.SLATE_EXE ? [] : ['.'],
+    env: {
+      ...process.env,
+      SLATE_USER_DATA: userData,
+      ANTHROPIC_BASE_URL: mockUrl,
+      ANTHROPIC_API_KEY: 'test-key',
+      ELECTRON_RENDERER_URL: ''
+    }
+  })
+  const page = await app.firstWindow()
+  page.on('pageerror', (e) => errors.push(e.message))
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
+  return { app, page }
+}
+
+let { app, page } = await launch()
 
 const step = async (name, fn) => {
   process.stdout.write(`• ${name} … `)
@@ -429,6 +434,20 @@ try {
     await page.locator('.history-item', { hasText: 'orders' }).click()
     await page.locator('.grid-head', { hasText: 'status' }).waitFor()
     await shot('08-light-theme')
+  })
+
+  await step('history survives a restart', async () => {
+    const entries = await page.locator('.history-item').count()
+    const active = await page.locator('.history-item.active .history-title').textContent()
+    // Typed right before quitting, inside the save debounce: the save on close must catch it.
+    await setEditor('select 42 as restart_check;')
+    await app.close()
+    ;({ app, page } = await launch())
+    await page.locator('.history-item.active').waitFor()
+    if ((await page.locator('.history-item').count()) !== entries) throw new Error('history entries were lost')
+    if ((await page.locator('.history-item.active .history-title').textContent()) !== active) throw new Error('active entry changed')
+    await page.locator('.cm-content', { hasText: 'restart_check' }).waitFor()
+    if (!existsSync(join(userData, 'workspace.json'))) throw new Error('workspace.json missing')
   })
 
   const unexpected = errors.filter((e) => !/Autofill|DevTools/.test(e))
