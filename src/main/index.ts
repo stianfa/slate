@@ -1,7 +1,7 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { SAVE_WORKSPACE_NOW, type Api } from '@shared/api'
+import { CHAT_DELTA, SAVE_WORKSPACE_NOW, type Api } from '@shared/api'
 import { connectionChanged } from '@shared/types'
 import { AiCompleter, describeAiError } from './ai'
 import { DbManager } from './db'
@@ -163,6 +163,23 @@ function registerIpc() {
       }
     },
     cancelCompletion: async (requestId) => ai.cancel(requestId),
+    chat: async ({ requestId, target, messages, sql, error }) => {
+      const schema = manager.cachedSchema(target) ?? (await manager.schema(target))
+      const schemaText = describeSchema(schema, {
+        database: target.database,
+        version: manager.serverVersion(target.connectionId),
+        // Large schemas keep full detail only for the tables mentioned here.
+        editorText: [sql, ...messages.map((m) => m.text)].join('\n')
+      })
+      try {
+        return await ai.chat(requestId, schemaText, { messages, sql, error }, (delta) =>
+          window?.webContents.send(CHAT_DELTA, requestId, delta)
+        )
+      } catch (e) {
+        throw new Error(describeAiError(e))
+      }
+    },
+    cancelChat: async (requestId) => ai.cancel(requestId),
     copyText: async (text) => clipboard.writeText(text),
     saveFile: async (defaultName, content) => {
       const path = await askSavePath(defaultName)

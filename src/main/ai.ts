@@ -8,6 +8,7 @@ import {
   PermissionDeniedError,
   RateLimitError
 } from 'openai'
+import type { ChatRequest } from '@shared/types'
 
 /** An Azure OpenAI deployment in Azure AI Foundry, set in Settings or through AI_FOUNDRY_* variables. */
 export interface AiConfig {
@@ -38,6 +39,20 @@ How to answer:
 - If the cursor follows a comment that describes a query, write that query, starting on a new line.
 - Keep it short: finish the current clause or statement, at most about 12 lines.
 - If nothing useful fits, reply with an empty message.
+
+The database schema:
+`
+
+const CHAT_INSTRUCTIONS = `You write PostgreSQL queries for the user of Slate, a desktop SQL client. They describe what they want in plain words, and you answer with the query.
+
+How to answer:
+- Put the query in a \`\`\`sql code block. Give one query unless they ask for more.
+- Before the block, write at most two short sentences: what the query does, and any assumption you made. No headings, no lists of steps.
+- Use only tables, columns, types and enum values from the schema below. Schema-qualify names outside "public". If the schema has nothing that fits, say so instead of guessing names.
+- Write read-only SELECT queries unless they ask to change data or schema.
+- When they ask to change or fix the query in their editor, return the whole updated query, not a fragment.
+- ":name" and "$1" are variables the editor fills in at run time. Keep the ones in their query, and use ":name" for values they will want to change, like dates or ids.
+- You can't run queries or see any rows; you only know the schema and the editor text. If an answer depends on the data, say what to run to find out.
 
 The database schema:
 `
@@ -88,9 +103,14 @@ export class AiCompleter {
     return this.client
   }
 
-  private async send(system: string, content: string, signal?: AbortSignal): Promise<string> {
+  private requireConfig(): AiConfig {
     const config = this.config()
     if (!config) throw new Error('AI is not set up: add the Azure endpoint, deployment and API key in Settings.')
+    return config
+  }
+
+  private async send(system: string, content: string, signal?: AbortSignal): Promise<string> {
+    const config = this.requireConfig()
     // Azure caches repeated prompt prefixes by itself, so the schema goes first, in the system message.
     const response = await this.getClient(config).responses.create(
       {
@@ -118,6 +138,55 @@ export class AiCompleter {
       return cleanCompletion(text, before, after)
     } catch (e) {
       if (controller.signal.aborted || e instanceof APIUserAbortError) return null
+      throw e
+    } finally {
+      this.inflight.delete(requestId)
+    }
+  }
+
+  /** Streams the answer to the chat's last message through onDelta, and returns all of it. */
+  async chat(
+    requestId: string,
+    schemaText: string,
+    request: Pick<ChatRequest, 'messages' | 'sql' | 'error'>,
+    onDelta: (delta: string) => void
+  ): Promise<string> {
+    const config = this.requireConfig()
+    const controller = new AbortController()
+    this.inflight.set(requestId, controller)
+    // The editor and the last error change between turns, so they ride along with the newest
+    // message rather than the system prompt, which stays the same and gets cached.
+    const last = request.messages.length - 1
+    const context = [
+      request.sql.trim() ? `The query in my editor now:\n\`\`\`sql\n${request.sql.slice(-MAX_PREFIX)}\n\`\`\`` : 'My editor is empty.',
+      request.error ? `Running it failed with: ${request.error}` : ''
+    ]
+      .filter(Boolean)
+      .join('\n\n')
+    let text = ''
+    try {
+      const stream = await this.getClient(config).responses.create(
+        {
+          model: config.deployment,
+          reasoning: { effort: 'medium' },
+          max_output_tokens: 8192,
+          stream: true,
+          input: [
+            { role: 'system', content: CHAT_INSTRUCTIONS + schemaText },
+            ...request.messages.map((m, i) => ({ role: m.role, content: i === last ? `${context}\n\n${m.text}` : m.text }))
+          ]
+        },
+        { signal: controller.signal }
+      )
+      for await (const event of stream) {
+        if (event.type !== 'response.output_text.delta') continue
+        text += event.delta
+        onDelta(event.delta)
+      }
+      return text
+    } catch (e) {
+      // Stopped from the chat: keep what had arrived.
+      if (controller.signal.aborted || e instanceof APIUserAbortError) return text
       throw e
     } finally {
       this.inflight.delete(requestId)

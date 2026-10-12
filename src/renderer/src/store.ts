@@ -13,6 +13,7 @@ import {
   environmentOf,
   environmentValues,
   targetKey,
+  type ChatMessage,
   type Environment,
   type ConnectionConfig,
   type ConnectionInput,
@@ -24,7 +25,7 @@ import {
   type TableInfo,
   type Target
 } from '@shared/types'
-import { api } from './api'
+import { api, onChatDelta } from './api'
 import { summarize, toCsv } from './lib/format'
 
 export type ConnStatus = 'idle' | 'connecting' | 'connected' | 'error'
@@ -55,7 +56,12 @@ export interface Tab {
   target: Target | null
   /** Values for :name and $1 placeholders, keyed "name" / "$1". */
   variables?: VariableValues
+  /** The AI chat about this query. */
+  chat?: ChatMessage[]
   // Runtime only, not persisted:
+  /** The chat answer streaming in. */
+  chatPending?: { requestId: string; text: string }
+  chatError?: string
   /** Keys of variables the last run attempt needed but had no value for. */
   missingVariables?: string[]
   /** When a run was last blocked by missing variables; the variables bar focuses the first one then. */
@@ -101,7 +107,7 @@ export interface AiState {
   error?: string
 }
 
-type SavedTab = Pick<Tab, 'id' | 'kind' | 'title' | 'sql' | 'target' | 'variables' | 'createdAt' | 'touchedAt' | 'lastRun'>
+type SavedTab = Pick<Tab, 'id' | 'kind' | 'title' | 'sql' | 'target' | 'variables' | 'chat' | 'createdAt' | 'touchedAt' | 'lastRun'>
 
 interface Workspace {
   tabs: SavedTab[]
@@ -112,6 +118,8 @@ interface Workspace {
   sidebarWidth: number
   historyWidth: number
   historyOpen: boolean
+  chatOpen: boolean
+  chatWidth: number
   editorRatio: number
 }
 
@@ -183,7 +191,13 @@ interface State extends Workspace {
   setDialog(dialog: DialogState): void
   saveSettings(input: SettingsInput): Promise<Settings>
   setAi(ai: AiState): void
-  setLayout(patch: Partial<Pick<Workspace, 'sidebarWidth' | 'editorRatio' | 'historyWidth' | 'historyOpen'>>): void
+  setLayout(
+    patch: Partial<Pick<Workspace, 'sidebarWidth' | 'editorRatio' | 'historyWidth' | 'historyOpen' | 'chatOpen' | 'chatWidth'>>
+  ): void
+  /** Sends a message to the tab's AI chat; the answer streams into chatPending. */
+  sendChat(tabId: string, text: string): Promise<void>
+  stopChat(tabId: string): void
+  clearChat(tabId: string): void
 }
 
 // Where the workspace lived before it moved to a file; read once to migrate.
@@ -197,6 +211,8 @@ const DEFAULT_WORKSPACE: Workspace = {
   sidebarWidth: 264,
   historyWidth: 248,
   historyOpen: true,
+  chatOpen: false,
+  chatWidth: 380,
   editorRatio: 0.45
 }
 
@@ -227,7 +243,8 @@ const sameTarget = (a: Target | null, b: Target | null) => (a && b ? targetKey(a
 export const historyFor = (tabs: Tab[], target: Target | null) => historyOrder(tabs.filter((t) => sameTarget(t.target, target)))
 
 /** An entry nobody has typed into, named or run: dropped once you leave it. */
-const isBlank = (t: Tab) => t.kind !== 'diagram' && !t.title && !t.sql.trim() && !t.lastRun && !t.running
+const isBlank = (t: Tab) =>
+  t.kind !== 'diagram' && !t.title && !t.sql.trim() && !t.lastRun && !t.running && !t.chat?.length && !t.chatPending
 
 const withoutBlanks = (tabs: Tab[], keep: string | null) => tabs.filter((t) => t.id === keep || !isBlank(t))
 
@@ -250,13 +267,14 @@ const SCHEMA_CHANGING = new Set(['CREATE', 'ALTER', 'DROP', 'COMMIT', 'END', 'CO
 
 function serializeWorkspace(s: State): string {
   const workspace: Workspace = {
-    tabs: s.tabs.map(({ id, kind, title, sql, target, variables, createdAt, touchedAt, lastRun }) => ({
+    tabs: s.tabs.map(({ id, kind, title, sql, target, variables, chat, createdAt, touchedAt, lastRun }) => ({
       id,
       kind,
       title,
       sql,
       target,
       variables,
+      chat: chat?.length ? chat : undefined,
       createdAt,
       touchedAt,
       lastRun
@@ -267,6 +285,8 @@ function serializeWorkspace(s: State): string {
     sidebarWidth: s.sidebarWidth,
     historyWidth: s.historyWidth,
     historyOpen: s.historyOpen,
+    chatOpen: s.chatOpen,
+    chatWidth: s.chatWidth,
     editorRatio: s.editorRatio
   }
   return JSON.stringify(workspace)
@@ -781,8 +801,46 @@ export const useStore = create<State>((set, get) => ({
 
   setLayout(patch) {
     set(patch)
+  },
+
+  async sendChat(tabId, text) {
+    const tab = get().tabs.find((t) => t.id === tabId)
+    if (!tab?.target || tab.chatPending || !text.trim()) return
+    const messages: ChatMessage[] = [...(tab.chat ?? []), { role: 'user', text: text.trim() }]
+    const requestId = crypto.randomUUID()
+    get().updateTab(tabId, { chat: messages, chatPending: { requestId, text: '' }, chatError: undefined })
+    let reply = ''
+    let chatError: string | undefined
+    try {
+      reply = await api.chat({ requestId, target: tab.target, messages, sql: tab.sql, error: tab.response?.error?.message })
+    } catch (e) {
+      chatError = (e as Error).message
+    }
+    // Cleared while the answer was on its way.
+    if (get().tabs.find((t) => t.id === tabId)?.chatPending?.requestId !== requestId) return
+    get().updateTab(tabId, {
+      chat: reply ? [...messages, { role: 'assistant', text: reply }] : messages,
+      chatPending: undefined,
+      chatError
+    })
+  },
+
+  stopChat(tabId) {
+    const pending = get().tabs.find((t) => t.id === tabId)?.chatPending
+    if (pending) void api.cancelChat(pending.requestId)
+  },
+
+  clearChat(tabId) {
+    get().stopChat(tabId)
+    get().updateTab(tabId, { chat: [], chatPending: undefined, chatError: undefined })
   }
 }))
+
+// Chat answers stream in from main, piece by piece.
+onChatDelta((requestId, delta) => {
+  const tab = useStore.getState().tabs.find((t) => t.chatPending?.requestId === requestId)
+  if (tab?.chatPending) useStore.getState().updateTab(tab.id, { chatPending: { requestId, text: tab.chatPending.text + delta } })
+})
 
 // Persist the workspace (history, layout, tree state) to workspace.json whenever it changes.
 // Nothing is written until init() has loaded the saved one, so it is never overwritten with defaults.

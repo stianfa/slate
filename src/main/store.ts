@@ -49,6 +49,18 @@ function unseal(value: string | undefined): string | null {
   return null
 }
 
+// macOS only lets the app that sealed a secret unseal it, and each Slate build is ad-hoc signed,
+// so after an update the keychain can refuse the old secrets.
+function savedPassword(stored: StoredConnection): string | null {
+  const password = unseal(stored.password)
+  if (stored.password && password === null) {
+    throw new Error(
+      `Slate couldn't read the saved password for ${stored.name} from the macOS keychain. This happens after installing a new Slate build, because macOS treats it as a different app. Quit and reopen Slate and choose Always Allow when macOS asks about "Slate Safe Storage", or open Edit connection and type the password again.`
+    )
+  }
+  return password
+}
+
 function readJson<T>(file: string, fallback: T): T {
   try {
     return JSON.parse(readFileSync(file, 'utf8')) as T
@@ -117,14 +129,14 @@ export class Store {
     const stored = this.connections.find((c) => c.id === id)
     if (!stored) throw new Error('Connection not found.')
     const { password, ...config } = stored
-    return { config: { ...config, hasPassword: Boolean(password) }, password: unseal(password) }
+    return { config: { ...config, hasPassword: Boolean(password) }, password: savedPassword(stored) }
   }
 
   /** Password for a test run of an edited connection: the typed one, else the stored one. */
   passwordFor(input: ConnectionInput): string | null {
     if (input.password !== undefined) return input.password || null
     const stored = input.id ? this.connections.find((c) => c.id === input.id) : undefined
-    return unseal(stored?.password)
+    return stored ? savedPassword(stored) : null
   }
 
   getSettings(): Settings {
@@ -136,7 +148,7 @@ export class Store {
         deployment: env('AI_FOUNDRY_MODEL'),
         apiVersion: env('AI_FOUNDRY_API_VERSION') || DEFAULT_AI_API_VERSION
       },
-      aiKeySource: aiApiKey ? 'settings' : env('AI_FOUNDRY_API_KEY') ? 'env' : null,
+      aiKeySource: aiApiKey ? (unseal(aiApiKey) ? 'settings' : 'unreadable') : env('AI_FOUNDRY_API_KEY') ? 'env' : null,
       aiReady: this.aiConfig() !== null
     }
   }

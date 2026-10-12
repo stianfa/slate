@@ -1,4 +1,5 @@
 import type {
+  ChatRequest,
   CompletionRequest,
   ConnectionConfig,
   ConnectionInput,
@@ -37,6 +38,10 @@ export interface Api {
   testAi(): Promise<TestResult>
   complete(request: CompletionRequest): Promise<string | null>
   cancelCompletion(requestId: string): Promise<void>
+  /** Answers the chat's last message; the text also streams in through `onChatDelta`. */
+  chat(request: ChatRequest): Promise<string>
+  /** Stops a chat answer; `chat` then resolves with the text so far. */
+  cancelChat(requestId: string): Promise<void>
   copyText(text: string): Promise<void>
   /** Asks where to save, then writes the text there. Null if the user cancelled. */
   saveFile(defaultName: string, content: string): Promise<string | null>
@@ -69,6 +74,8 @@ export const API_METHODS: (keyof Api)[] = [
   'testAi',
   'complete',
   'cancelCompletion',
+  'chat',
+  'cancelChat',
   'copyText',
   'saveFile',
   'exportQuery',
@@ -82,6 +89,11 @@ export interface Bridge {
   platform: string
   /** Synchronous save for the window's last moments, when an async call may never finish. */
   saveWorkspaceNow(json: string): void
+  /** Text of chat answers as it streams in. Returns a function that stops listening. */
+  onChatDelta(listener: (requestId: string, delta: string) => void): () => void
 }
+
+/** Main to renderer: (requestId, delta) for each piece of a chat answer. */
+export const CHAT_DELTA = 'chatDelta'
 
 export const SAVE_WORKSPACE_NOW = 'saveWorkspaceNow'

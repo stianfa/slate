@@ -22,6 +22,7 @@ const mock = createServer((req, res) => {
   req.on('end', () => {
     const json = JSON.parse(body || '{}')
     aiRequests.push({ url: req.url, headers: req.headers, body: json })
+    if (json.stream) return streamChat(res, json)
     const prompt = JSON.stringify(json.input ?? [])
     let text = 'OK'
     if (prompt.includes('<cursor/>')) {
@@ -49,6 +50,25 @@ const mock = createServer((req, res) => {
     )
   })
 })
+
+// The chat streams its answer as server-sent events, a few pieces at a time.
+function streamChat(res, json) {
+  const asked = json.input.at(-1).content
+  const answer = asked.includes('admins')
+    ? 'Users with the admin flag set.\n\n```sql\nselect id, email\nfrom users\nwhere is_admin;\n```'
+    : 'No idea.'
+  const pieces = answer.match(/[\s\S]{1,12}/g)
+  res.writeHead(200, { 'content-type': 'text/event-stream' })
+  const send = (event) => res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+  let n = 0
+  send({ type: 'response.created', sequence_number: n++, response: { id: 'resp_chat', status: 'in_progress', output: [] } })
+  for (const delta of pieces) {
+    send({ type: 'response.output_text.delta', sequence_number: n++, item_id: 'msg_chat', output_index: 0, content_index: 0, delta })
+  }
+  send({ type: 'response.completed', sequence_number: n++, response: { id: 'resp_chat', status: 'completed', output: [] } })
+  res.end()
+}
+
 await new Promise((r) => mock.listen(0, '127.0.0.1', r))
 const mockUrl = `http://127.0.0.1:${mock.address().port}`
 
@@ -306,6 +326,36 @@ try {
     const system = completion.body.input.find((m) => m.role === 'system')
     if (!system?.content.includes('public.users: id bigint PK')) throw new Error('schema missing from prompt')
     if (completion.headers['api-key'] !== 'test-key') throw new Error('api key not sent')
+  })
+
+  await step('chat writes a query', async () => {
+    await page.getByRole('button', { name: 'New query', exact: true }).click()
+    await page.keyboard.press(`${mod}+J`)
+    await page.locator('.chat-panel').waitFor()
+    await page.getByLabel('Message').fill('list the admins')
+    await page.keyboard.press('Enter')
+    const block = page.locator('.chat-sql-block', { hasText: 'where is_admin;' })
+    await block.getByRole('button', { name: 'Replace query' }).waitFor()
+    await shot('06b-chat')
+
+    const request = aiRequests.find((r) => r.body.stream && JSON.stringify(r.body.input).includes('list the admins'))
+    if (!request) throw new Error('no chat request reached the mock')
+    if (request.body.reasoning?.effort !== 'medium') throw new Error('chat effort not medium')
+    if (!request.body.input[0].content.includes('public.users: id bigint PK')) throw new Error('schema missing from chat prompt')
+    if (!request.body.input.at(-1).content.includes('My editor is empty.')) throw new Error('editor context missing')
+
+    await block.getByRole('button', { name: 'Replace query' }).click()
+    if (!(await page.locator('.cm-content').textContent()).includes('where is_admin;')) throw new Error('query not in the editor')
+    await page.keyboard.press(`${mod}+Enter`)
+    await page.locator('.results-summary', { hasText: /rows?/ }).waitFor()
+
+    // The chat belongs to its query and survives closing the panel.
+    await page.keyboard.press(`${mod}+J`)
+    await page.locator('.chat-panel').waitFor({ state: 'detached' })
+    await page.getByRole('button', { name: 'Ask AI' }).click()
+    await page.locator('.chat-msg.user', { hasText: 'list the admins' }).waitFor()
+    await page.getByRole('button', { name: 'Close chat' }).click()
+    await page.locator('.cm-content').click()
   })
 
   await step('schema completion offers columns', async () => {

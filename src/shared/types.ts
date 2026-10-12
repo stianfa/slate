@@ -180,8 +180,8 @@ export interface Settings {
   aiApiVersion: string
   /** What applies when a field above is empty: the AI_FOUNDRY_* variables, or the default API version. */
   aiFallback: { endpoint: string; deployment: string; apiVersion: string }
-  /** Where the Azure API key comes from, if anywhere. */
-  aiKeySource: 'settings' | 'env' | null
+  /** Where the Azure API key comes from, if anywhere; 'unreadable' is a saved key this build can't decrypt. */
+  aiKeySource: 'settings' | 'env' | 'unreadable' | null
   /** Endpoint, deployment and key are all set. */
   aiReady: boolean
   rowLimit: number
@@ -210,5 +210,21 @@ export interface CompletionRequest {
 
 /** The Azure OpenAI API version used when neither Settings nor AI_FOUNDRY_API_VERSION sets one. */
 export const DEFAULT_AI_API_VERSION = '2025-04-01-preview'
+
+/** One turn of the AI chat that writes queries. */
+export interface ChatMessage {
+  role: 'user' | 'assistant'
+  text: string
+}
+
+export interface ChatRequest {
+  requestId: string
+  target: Target
+  messages: ChatMessage[]
+  /** The editor text, so "fix this" or "add a filter" work on the current query. */
+  sql: string
+  /** The last run's error message, if it failed (the message only, not its detail). */
+  error?: string
+}
 
 export type TestResult = { ok: true; message: string } | { ok: false; message: string }

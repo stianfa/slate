@@ -21,6 +21,19 @@ export const editorBridge = {
   },
   focus() {
     this.view?.focus()
+  },
+  /** Replaces the whole query; Cmd+Z brings the old one back. */
+  replace(text: string) {
+    const view = this.view
+    if (!view) return
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text }, selection: { anchor: text.length } })
+    view.focus()
+  },
+  insert(text: string) {
+    const view = this.view
+    if (!view) return
+    view.dispatch(view.state.replaceSelection(text))
+    view.focus()
   }
 }
 

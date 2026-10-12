@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { Plus } from 'lucide-react'
 import { api, modKey } from './api'
+import { ChatPanel } from './components/ChatPanel'
 import { CommandPalette } from './components/CommandPalette'
 import { ConfirmDialog } from './components/ConfirmDialog'
 import { ConfirmRunDialog } from './components/ConfirmRunDialog'
@@ -73,6 +74,9 @@ function useShortcuts() {
       } else if (key === 'b' && !e.shiftKey) {
         e.preventDefault()
         s.setLayout({ historyOpen: !s.historyOpen })
+      } else if (key === 'j' && !e.shiftKey) {
+        e.preventDefault()
+        s.setLayout({ chatOpen: !s.chatOpen })
       } else if (key === 'r' && !e.shiftKey) {
         e.preventDefault()
         if (s.currentTarget) void s.loadSchema(s.currentTarget, true)
@@ -130,6 +134,7 @@ export function App() {
   const dialog = useStore((s) => s.dialog)
   const init = useStore((s) => s.init)
   const historyOpen = useStore((s) => s.historyOpen)
+  const chatOpen = useStore((s) => s.chatOpen)
 
   useEffect(() => {
     void init()
@@ -154,6 +159,7 @@ export function App() {
             <QueryPane tab={tab} />
           )}
         </main>
+        {chatOpen && tab && tab.kind !== 'diagram' && <ChatPanel tab={tab} />}
       </div>
       {dialog?.type === 'connection' && <ConnectionDialog id={dialog.id} />}
       {dialog?.type === 'settings' && <SettingsDialog />}

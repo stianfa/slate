@@ -1,5 +1,5 @@
 import { useEffect, useRef, type PointerEvent } from 'react'
-import { AlignLeft, Check, ChevronDown, Database, Lock, Network, Play, PlaySquare, Sparkles } from 'lucide-react'
+import { AlignLeft, Check, ChevronDown, Database, Lock, MessageSquare, Network, Play, PlaySquare, Sparkles } from 'lucide-react'
 import { environmentOf, targetKey } from '@shared/types'
 import { modKey } from '../api'
 import { useStore, type Tab } from '../store'
@@ -98,6 +98,22 @@ function TransactionBadge({ tab }: { tab: Tab }) {
         Rollback
       </button>
     </div>
+  )
+}
+
+function ChatToggle() {
+  const chatOpen = useStore((s) => s.chatOpen)
+  const setLayout = useStore((s) => s.setLayout)
+  return (
+    <button
+      className={`icon-btn${chatOpen ? ' active' : ''}`}
+      onClick={() => setLayout({ chatOpen: !chatOpen })}
+      title={`Ask AI to write a query (${modKey}+J)`}
+      aria-label="Ask AI"
+      aria-pressed={chatOpen}
+    >
+      <MessageSquare size={15} />
+    </button>
   )
 }
 
@@ -201,6 +217,7 @@ export function QueryPane({ tab }: { tab: Tab }) {
             <Network size={15} />
           </button>
         )}
+        <ChatToggle />
         <AiStatus />
       </div>
       <VariablesBar tab={tab} />

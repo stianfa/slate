@@ -1,22 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import {
-  AlignLeft,
-  Braces,
-  Database,
-  Eye,
-  FileCode2,
-  Moon,
-  Network,
-  PanelLeft,
-  Play,
-  PlaySquare,
-  Plug,
-  Plus,
-  RefreshCw,
-  Settings,
-  Sun,
-  Table2
-} from 'lucide-react'
+import { AlignLeft, Braces, Database, Eye, FileCode2, MessageSquare, Moon, Network, PanelLeft, Play, PlaySquare, Plug, Plus, RefreshCw, Settings, Sun, Table2 } from 'lucide-react'
 import { targetKey, type Target } from '@shared/types'
 import { modKey } from '../api'
 import { displayTitle, historyOrder, useStore } from '../store'
@@ -62,6 +45,13 @@ function Palette() {
       command('run', 'Run statement', <Play size={14} />, () => editorBridge.run('smart'), `${modKey}+Enter`)
       command('run-all', 'Run everything', <PlaySquare size={14} />, () => editorBridge.run('all'), `${modKey}+Shift+Enter`)
       command('format', 'Format SQL', <AlignLeft size={14} />, () => editorBridge.format(), 'Shift+Alt+F')
+      command(
+        'chat',
+        s.chatOpen ? 'Close AI chat' : 'Ask AI to write a query',
+        <MessageSquare size={14} />,
+        () => s.setLayout({ chatOpen: !s.chatOpen }),
+        `${modKey}+J`
+      )
     }
     if (current) {
       command('diagram', `Open diagram of ${current.database}`, <Network size={14} />, () => s.openDiagram(current))

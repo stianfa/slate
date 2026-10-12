@@ -75,7 +75,9 @@ export function SettingsDialog() {
                 ? 'A key is saved (encrypted with your OS keychain).'
                 : settings.aiKeySource === 'env'
                   ? 'Using AI_FOUNDRY_API_KEY from the environment.'
-                  : 'A key for the Azure resource, from Azure AI Foundry under Keys and Endpoint.'
+                  : settings.aiKeySource === 'unreadable'
+                    ? "The saved key can't be read by this Slate build (macOS treats each new build as a different app). Paste it again."
+                    : 'A key for the Azure resource, from Azure AI Foundry under Keys and Endpoint.'
             }
           >
             <div className="input-row">
@@ -90,7 +92,7 @@ export function SettingsDialog() {
               <button className="btn" onClick={() => void saveKey()} disabled={!apiKey.trim()}>
                 Save
               </button>
-              {settings.aiKeySource === 'settings' && (
+              {(settings.aiKeySource === 'settings' || settings.aiKeySource === 'unreadable') && (
                 <button className="btn" onClick={() => void saveSettings({ aiApiKey: null })}>
                   Remove
                 </button>
