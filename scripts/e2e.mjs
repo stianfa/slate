@@ -99,7 +99,7 @@ try {
     await page.getByRole('button', { name: 'New connection' }).first().click()
     await page.getByPlaceholder('postgres://user:password@host:5432/database').fill(`postgres://slate:slate@localhost:${port}/shop`)
     await page.locator('.field', { hasText: 'Name' }).locator('input').fill('Local shop')
-    await page.getByRole('button', { name: 'Test' }).click()
+    await page.getByRole('button', { name: 'Test connection' }).click()
     await page.getByText(/Connected · PostgreSQL/).waitFor()
     await shot('02-connection-dialog')
     await page.getByRole('button', { name: 'Connect', exact: true }).click()
@@ -334,7 +334,7 @@ try {
     await page.locator('.var', { hasText: ':org' }).waitFor()
     await page.getByRole('button', { name: 'Environment variables' }).click()
     await page.getByLabel('org for Production').fill('3')
-    await page.getByLabel('org for Staging').fill('7')
+    await page.getByLabel('org for Test').fill('7')
     await shot('15-env-variables-dialog')
     await page.getByRole('button', { name: 'Save', exact: true }).click()
 

@@ -1,11 +1,11 @@
 export type SslMode = 'disable' | 'require' | 'verify-full'
 
-export type Environment = 'local' | 'development' | 'staging' | 'production'
+export type Environment = 'local' | 'development' | 'test' | 'production'
 
 export const ENVIRONMENTS: { id: Environment; label: string; short: string; color: string }[] = [
   { id: 'local', label: 'Local', short: 'LOCAL', color: '#94a3b8' },
   { id: 'development', label: 'Development', short: 'DEV', color: '#22c55e' },
-  { id: 'staging', label: 'Staging', short: 'STAGING', color: '#f59e0b' },
+  { id: 'test', label: 'Test', short: 'TEST', color: '#f59e0b' },
   { id: 'production', label: 'Production', short: 'PROD', color: '#ef4444' }
 ]
 
@@ -45,6 +45,23 @@ export function environmentOf(connection: Pick<ConnectionConfig, 'environment' |
   const own = connection?.databaseEnvironments?.[database]
   const id = own === 'none' ? undefined : (own ?? connection?.environment)
   return ENVIRONMENTS.find((e) => e.id === id) ?? null
+}
+
+// Staging was renamed to Test. Files saved before that still say 'staging'.
+const renamed = <T extends string | undefined>(id: T): T => (id === 'staging' ? 'test' : id) as T
+
+export function withRenamedEnvironments<T extends Pick<ConnectionConfig, 'environment' | 'databaseEnvironments'>>(connection: T): T {
+  const marks = connection.databaseEnvironments
+  return {
+    ...connection,
+    environment: renamed(connection.environment),
+    databaseEnvironments: marks && Object.fromEntries(Object.entries(marks).map(([db, id]) => [db, renamed(id)]))
+  }
+}
+
+export function withRenamedEnvironmentVariables(vars: EnvironmentVariables): EnvironmentVariables {
+  const { staging, ...rest } = vars as EnvironmentVariables & { staging?: Record<string, string> }
+  return staging ? { ...rest, test: { ...staging, ...rest.test } } : vars
 }
 
 /** Fields that change how we connect; editing anything else keeps open sessions. */

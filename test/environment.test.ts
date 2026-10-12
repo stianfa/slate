@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { isReadOnly } from '../src/shared/sql'
-import { environmentOf } from '../src/shared/types'
+import { environmentOf, withRenamedEnvironments, withRenamedEnvironmentVariables } from '../src/shared/types'
 
 describe('isReadOnly', () => {
   it('accepts reads and session commands', () => {
@@ -42,11 +42,29 @@ describe('isReadOnly', () => {
 })
 
 describe('environmentOf', () => {
-  const connection = { environment: 'staging' as const, databaseEnvironments: { app_prod: 'production' as const, scratch: 'none' as const } }
+  const connection = { environment: 'test' as const, databaseEnvironments: { app_prod: 'production' as const, scratch: 'none' as const } }
   it('prefers the database mark, then the connection mark', () => {
     expect(environmentOf(connection, 'app_prod')?.id).toBe('production')
-    expect(environmentOf(connection, 'app')?.id).toBe('staging')
+    expect(environmentOf(connection, 'app')?.id).toBe('test')
     expect(environmentOf(connection, 'scratch')).toBeNull()
     expect(environmentOf(undefined, 'x')).toBeNull()
+  })
+})
+
+describe('renamed environments', () => {
+  it('reads marks saved as staging as test', () => {
+    const saved = { environment: 'staging', databaseEnvironments: { app_stg: 'staging', app_prod: 'production', scratch: 'none' } } as never
+    expect(withRenamedEnvironments(saved)).toEqual({
+      environment: 'test',
+      databaseEnvironments: { app_stg: 'test', app_prod: 'production', scratch: 'none' }
+    })
+    expect(withRenamedEnvironments({ environment: 'production' })).toEqual({ environment: 'production' })
+  })
+
+  it('moves staging variables to test, keeping values already set on test', () => {
+    const saved = { staging: { org: '7', tenant: 'stg' }, test: { tenant: 'tst' }, production: { org: '3' } } as never
+    expect(withRenamedEnvironmentVariables(saved)).toEqual({ test: { org: '7', tenant: 'tst' }, production: { org: '3' } })
+    const current = { production: { org: '3' } }
+    expect(withRenamedEnvironmentVariables(current)).toBe(current)
   })
 })

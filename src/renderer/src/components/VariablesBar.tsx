@@ -94,7 +94,7 @@ export function VariablesBar({ tab }: { tab: Tab }) {
       <button
         className="ghost-btn vars-env"
         onClick={() => setDialog({ type: 'envVariables', suggest: variables.filter((v) => !v.key.startsWith('$')).map((v) => v.key) })}
-        title="Set values per environment (Local, Development, Staging, Production)"
+        title="Set values per environment (Local, Development, Test, Production)"
       >
         <SlidersHorizontal size={12} /> Environment variables
       </button>

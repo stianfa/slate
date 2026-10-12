@@ -175,7 +175,7 @@ export function ConnectionDialog({ id }: { id?: string }) {
             {error && <span className="bad">{error}</span>}
           </div>
           <button className="btn" onClick={() => void runTest()} disabled={test === 'running'}>
-            Test
+            Test connection
           </button>
           <button className="btn primary" onClick={() => void save()} disabled={saving}>
             {existing ? 'Save' : 'Connect'}

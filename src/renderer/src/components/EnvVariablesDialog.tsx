@@ -83,7 +83,7 @@ export function EnvVariablesDialog({ suggest = [] }: { suggest?: string[] }) {
     >
       <p className="muted small envvars-intro">
         Values for <span className="mono">:name</span> variables. A tab uses the column matching its database&rsquo;s
-        environment, so the same query picks up the right values on staging and production. A tab can still type its own
+        environment, so the same query picks up the right values on test and production. A tab can still type its own
         value. Mark databases with an environment in their connection settings.
       </p>
       <div className="envvars">

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ConnectionConfig, ConnectionInput, EnvironmentVariables, Settings, SettingsInput, Theme } from '@shared/types'
+import { withRenamedEnvironments, withRenamedEnvironmentVariables } from '@shared/types'
 import type { ResolvedConnection } from './db'
 
 interface StoredConnection extends Omit<ConnectionConfig, 'hasPassword'> {
@@ -51,6 +52,11 @@ function readJson<T>(file: string, fallback: T): T {
   }
 }
 
+function readSettings(file: string): StoredSettings {
+  const settings: StoredSettings = { ...DEFAULT_SETTINGS, ...readJson(file, {}) }
+  return { ...settings, environmentVariables: withRenamedEnvironmentVariables(settings.environmentVariables ?? {}) }
+}
+
 function writeJson(file: string, value: unknown) {
   const tmp = `${file}.tmp`
   writeFileSync(tmp, JSON.stringify(value, null, 2))
@@ -61,8 +67,8 @@ export class Store {
   private connectionsFile = join(app.getPath('userData'), 'connections.json')
   private settingsFile = join(app.getPath('userData'), 'settings.json')
   private workspaceFile = join(app.getPath('userData'), 'workspace.json')
-  private connections: StoredConnection[] = readJson(this.connectionsFile, [])
-  private settings: StoredSettings = { ...DEFAULT_SETTINGS, ...readJson(this.settingsFile, {}) }
+  private connections: StoredConnection[] = readJson<StoredConnection[]>(this.connectionsFile, []).map(withRenamedEnvironments)
+  private settings: StoredSettings = readSettings(this.settingsFile)
 
   listConnections(): ConnectionConfig[] {
     return this.connections.map(({ password, ...c }) => ({ ...c, hasPassword: Boolean(password) }))
