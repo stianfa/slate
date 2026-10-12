@@ -24,7 +24,7 @@ export function TitleBar() {
       <button
         className={`titlebar-btn${historyOpen ? ' active' : ''}`}
         onClick={() => setLayout({ historyOpen: !historyOpen })}
-        title={historyOpen ? 'Hide history' : 'Show history'}
+        title={`${historyOpen ? 'Hide history' : 'Show history'} (${modKey}+B)`}
         aria-label="Toggle history"
       >
         <PanelLeft size={15} />

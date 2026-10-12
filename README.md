@@ -27,17 +27,23 @@ A slim PostgreSQL desktop client for developers. Connect, browse tables and colu
 | --- | --- |
 | `Ctrl+Enter` | Run selection or current statement |
 | `Ctrl+Shift+Enter` | Run everything |
+| `Ctrl+.` | Cancel the running query |
+| `Ctrl+Shift+C` / `Ctrl+Shift+R` | Commit / roll back the open transaction |
 | `Tab` / `Esc` | Accept / dismiss AI suggestion |
 | `Alt+\` | Ask AI for a suggestion now |
 | `Ctrl+Space` | Schema completion |
 | `Ctrl+T` | New query |
+| `Ctrl+Backspace` | Delete the current query from history (outside text fields; Undo brings it back) |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous query in this database's history |
 | `Ctrl+K` / `Ctrl+Shift+P` | Command palette |
+| `Ctrl+B` | Show or hide history |
+| `Ctrl+R` | Refresh the current database's schema |
+| `Ctrl+Shift+F` | Filter tables |
 | `Shift+Alt+F` | Format SQL |
 | `Ctrl+F` | Find in editor |
 | `Ctrl+,` | Settings |
 
-On macOS, use `Cmd` instead of `Ctrl`. Double-click a history entry, or the name in the title bar, to rename it.
+On macOS, use `Cmd` instead of `Ctrl`, except for `Ctrl+Tab`: macOS keeps `Cmd+Tab` for switching apps. `Alt` is `Option`. Double-click a history entry, or the name in the title bar, to rename it.
 
 ## AI setup
 

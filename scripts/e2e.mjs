@@ -183,8 +183,22 @@ try {
     await page.keyboard.press(`${mod}+Shift+Enter`)
     await page.locator('.tx-badge', { hasText: 'Transaction open' }).waitFor()
     await shot('05-transaction')
-    await page.locator('.tx-badge').getByRole('button', { name: 'Rollback' }).click()
+    await page.keyboard.press(`${mod}+Shift+R`)
     await page.locator('.tx-badge').waitFor({ state: 'detached' })
+
+    await setEditor('begin; select 1;')
+    await page.keyboard.press(`${mod}+Shift+Enter`)
+    await page.locator('.tx-badge', { hasText: 'Transaction open' }).waitFor()
+    await page.keyboard.press(`${mod}+Shift+C`)
+    await page.locator('.tx-badge').waitFor({ state: 'detached' })
+  })
+
+  await step('cancel a running query', async () => {
+    await setEditor('select pg_sleep(30);')
+    await page.keyboard.press(`${mod}+Enter`)
+    await page.getByRole('button', { name: 'Cancel' }).waitFor()
+    await page.keyboard.press(`${mod}+.`)
+    await page.getByText(/canceling statement due to user request/).waitFor()
   })
 
   await step('ask before an open transaction would be rolled back', async () => {
@@ -425,9 +439,18 @@ try {
     await page.getByRole('button', { name: 'Undo' }).click()
     await page.locator('.history-item', { hasText: 'Touch org' }).waitFor()
 
+    // Cmd+Backspace outside a text field deletes the current query.
+    await page.locator('.history-item.active', { hasText: 'Touch org' }).waitFor()
+    await page.evaluate(() => document.activeElement?.blur())
+    await page.keyboard.press(`${mod}+Backspace`)
+    await page.locator('.toast', { hasText: 'Touch org' }).waitFor()
+    if ((await page.locator('.history-item').count()) !== before - 1) throw new Error('entry not deleted from the keyboard')
+    await page.getByRole('button', { name: 'Undo' }).click()
+    await page.locator('.history-item', { hasText: 'Touch org' }).waitFor()
+
     await page.getByRole('button', { name: 'Toggle history' }).click()
     await page.locator('.history').waitFor({ state: 'detached' })
-    await page.getByRole('button', { name: 'Toggle history' }).click()
+    await page.keyboard.press(`${mod}+B`)
     await page.locator('.history').waitFor()
   })
 
@@ -466,6 +489,29 @@ try {
     if ((await page.locator('.history-item').count()) !== 1) throw new Error('blank queries piled up')
     await database('shop').click()
     await page.locator('.history-head', { hasText: 'shop' }).waitFor()
+  })
+
+  await step('refresh the schema and filter tables from the keyboard', async () => {
+    // A table made outside Slate shows up after Cmd+R, and goes away after the next one.
+    const table = `made_elsewhere_${Date.now()}`
+    const db = new (require('pg').Client)({ connectionString: `postgres://slate:slate@localhost:${port}/shop` })
+    await db.connect()
+    try {
+      await db.query(`create table ${table} (id int)`)
+      await page.keyboard.press(`${mod}+R`)
+      await page.locator('.tree-row', { hasText: table }).waitFor()
+      await db.query(`drop table ${table}`)
+      await page.keyboard.press(`${mod}+R`)
+      await page.locator('.tree-row', { hasText: table }).waitFor({ state: 'detached' })
+    } finally {
+      await db.query(`drop table if exists ${table}`)
+      await db.end()
+    }
+
+    await page.keyboard.press(`${mod}+Shift+F`)
+    if (!(await page.locator('.sidebar .sidebar-search input').evaluate((el) => el === document.activeElement))) {
+      throw new Error('the table filter is not focused')
+    }
   })
 
   await step('format SQL', async () => {

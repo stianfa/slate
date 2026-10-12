@@ -90,11 +90,11 @@ function TransactionBadge({ tab }: { tab: Tab }) {
       <span className="tx-dot" />
       {status === 'transaction' ? 'Transaction open' : 'Transaction failed'}
       {status === 'transaction' && (
-        <button onClick={() => void run(tab.id, 'COMMIT', 0)} title="Run COMMIT">
+        <button onClick={() => void run(tab.id, 'COMMIT', 0)} title={`Run COMMIT (${modKey}+Shift+C)`}>
           Commit
         </button>
       )}
-      <button onClick={() => void run(tab.id, 'ROLLBACK', 0)} title="Run ROLLBACK">
+      <button onClick={() => void run(tab.id, 'ROLLBACK', 0)} title={`Run ROLLBACK (${modKey}+Shift+R)`}>
         Rollback
       </button>
     </div>

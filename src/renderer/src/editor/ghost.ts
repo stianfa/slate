@@ -170,7 +170,9 @@ export function ghostText(source: GhostSource): Extension {
         { key: 'Tab', run: acceptAll },
         { key: 'Escape', run: dismiss },
         { key: 'Mod-ArrowRight', run: acceptWord },
-        { key: 'Alt-\\', run: trigger }
+        // Alt+\, matched by physical key like Shift+Alt+F in setup.ts: Option combinations type
+        // characters on macOS (« on a US layout), so CodeMirror won't match them by name there.
+        { any: (v, e) => e.code === 'Backslash' && e.altKey && !e.shiftKey && !e.ctrlKey && !e.metaKey && trigger(v) }
       ])
     )
   ]

@@ -20,7 +20,7 @@ import {
 } from 'lucide-react'
 import { qualifiedName } from '@shared/sql'
 import { ENVIRONMENTS, environmentOf, targetKey, type ConnectionConfig, type TableInfo, type Target } from '@shared/types'
-import { api } from '../api'
+import { api, modKey } from '../api'
 import { formatEstimate, shortType } from '../lib/format'
 import { useStore } from '../store'
 import { EnvBadge } from './environment'
@@ -345,6 +345,7 @@ export function Sidebar() {
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           placeholder="Filter tables"
+          title={`Filter tables (${modKey}+Shift+F)`}
           spellCheck={false}
         />
         {filter && (

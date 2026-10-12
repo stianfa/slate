@@ -204,7 +204,11 @@ export function createExtensions(options: {
       keymap.of([
         { key: 'Mod-Enter', run: (v) => options.onRun(v, 'smart') },
         { key: 'Shift-Mod-Enter', run: (v) => options.onRun(v, 'all') },
-        { key: 'Shift-Alt-f', run: (v) => options.onFormat(v) }
+        // Shift+Alt+F, matched by physical key: on macOS, Option+Shift+F types a character (Ï on a
+        // US layout), and CodeMirror doesn't treat Option combinations as shortcuts there.
+        {
+          any: (v, e) => e.code === 'KeyF' && e.shiftKey && e.altKey && !e.ctrlKey && !e.metaKey && options.onFormat(v)
+        }
       ])
     ),
     keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...searchKeymap, ...historyKeymap, ...completionKeymap, indentWithTab]),

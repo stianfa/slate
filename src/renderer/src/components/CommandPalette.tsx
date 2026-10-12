@@ -65,10 +65,14 @@ function Palette() {
     }
     if (current) {
       command('diagram', `Open diagram of ${current.database}`, <Network size={14} />, () => s.openDiagram(current))
-      command('refresh', `Refresh schema of ${current.database}`, <RefreshCw size={14} />, () => void s.loadSchema(current, true))
+      command('refresh', `Refresh schema of ${current.database}`, <RefreshCw size={14} />, () => void s.loadSchema(current, true), `${modKey}+R`)
     }
-    command('history', s.historyOpen ? 'Hide history' : 'Show history', <PanelLeft size={14} />, () =>
-      s.setLayout({ historyOpen: !s.historyOpen })
+    command(
+      'history',
+      s.historyOpen ? 'Hide history' : 'Show history',
+      <PanelLeft size={14} />,
+      () => s.setLayout({ historyOpen: !s.historyOpen }),
+      `${modKey}+B`
     )
     command('envvars', 'Environment variables', <Braces size={14} />, () => s.setDialog({ type: 'envVariables' }))
     command('connection', 'New connection', <Plug size={14} />, () => s.setDialog({ type: 'connection' }))

@@ -238,7 +238,7 @@ export function Results({ tab }: { tab: Tab }) {
         </div>
         <div className="results-actions">
           {tab.running && (
-            <button className="ghost-btn danger" onClick={() => void cancel(tab.id)}>
+            <button className="ghost-btn danger" onClick={() => void cancel(tab.id)} title={`Cancel the query (${modKey}+.)`}>
               <Square size={11} fill="currentColor" /> Cancel
             </button>
           )}

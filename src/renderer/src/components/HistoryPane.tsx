@@ -1,5 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState, type PointerEvent } from 'react'
 import { Database, Network, Search, Trash2, X } from 'lucide-react'
+import { modKey } from '../api'
 import { displayTitle, historyFor, useStore, type Tab } from '../store'
 import { EnvBadge, useEnvironment } from './environment'
 import { Spinner } from './ui'
@@ -105,7 +106,7 @@ const HistoryItem = memo(function HistoryItem({ tab, active, now }: { tab: Tab; 
         className="history-delete"
         onMouseDown={(e) => e.stopPropagation()}
         onClick={() => void requestDelete(tab.id)}
-        title="Delete from history"
+        title={`Delete from history (${modKey}+Backspace)`}
         aria-label="Delete from history"
       >
         <Trash2 size={12} />

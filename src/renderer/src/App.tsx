@@ -36,13 +36,21 @@ function useTheme() {
   }, [theme])
 }
 
+// Text fields keep Cmd+Backspace for deleting to the start of the line.
+const editable = (target: EventTarget | null) =>
+  target instanceof HTMLElement && (target.isContentEditable || target.closest('input, textarea, select') !== null)
+
 function useShortcuts() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey
       const s = useStore.getState()
-      if (!mod) return
+      // Skip keys something else already handled, like Cmd+Shift+C copying from the grid.
+      if (!mod || e.defaultPrevented) return
       const key = e.key.toLowerCase()
+      // Keys that change the query behind a dialog or the palette shouldn't reach it.
+      const blocked = Boolean(s.dialog || s.confirmation || s.pendingRun || s.paletteOpen)
+      const tab = activeTab(s)
       if (key === 'k' || (key === 'p' && e.shiftKey)) {
         e.preventDefault()
         s.setPalette(!s.paletteOpen)
@@ -59,6 +67,30 @@ function useShortcuts() {
         // Run from anywhere, e.g. while the results grid has focus.
         e.preventDefault()
         editorBridge.run(e.shiftKey ? 'all' : 'smart')
+      } else if (key === '.') {
+        e.preventDefault()
+        if (tab?.running) void s.cancel(tab.id)
+      } else if (key === 'b' && !e.shiftKey) {
+        e.preventDefault()
+        s.setLayout({ historyOpen: !s.historyOpen })
+      } else if (key === 'r' && !e.shiftKey) {
+        e.preventDefault()
+        if (s.currentTarget) void s.loadSchema(s.currentTarget, true)
+      } else if (key === 'f' && e.shiftKey) {
+        e.preventDefault()
+        const filter = document.querySelector<HTMLInputElement>('.sidebar .sidebar-search input')
+        filter?.focus()
+        filter?.select()
+      } else if ((key === 'c' || key === 'r') && e.shiftKey) {
+        // Same as the buttons on the transaction badge: Commit only while the transaction is healthy.
+        const status = tab?.response?.txStatus
+        if (blocked || !tab || tab.running || !status || status === 'idle') return
+        if (key === 'c' && status !== 'transaction') return
+        e.preventDefault()
+        void s.run(tab.id, key === 'c' ? 'COMMIT' : 'ROLLBACK', 0)
+      } else if (key === 'backspace' && !editable(e.target)) {
+        e.preventDefault()
+        if (!blocked && tab) void s.requestDelete(tab.id)
       }
     }
     window.addEventListener('keydown', onKey)
