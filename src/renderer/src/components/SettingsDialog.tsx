@@ -117,8 +117,8 @@ export function SettingsDialog() {
         <section className="settings-section">
           <h3>Environment variables</h3>
           <p className="muted small">
-            Values for query variables like <span className="mono">:tenant_id</span>, set per environment. A tab picks the
-            values for the environment its database is marked with.
+            Values for query variables like <span className="mono">:tenant_id</span>, set per environment or globally. A
+            tab picks the values for the environment its database is marked with, plus the global ones.
           </p>
           <div className="input-row">
             <button className="btn" onClick={() => setDialog({ type: 'envVariables' })}>

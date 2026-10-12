@@ -11,6 +11,7 @@ import {
 import {
   connectionChanged,
   environmentOf,
+  environmentValues,
   targetKey,
   type Environment,
   type ConnectionConfig,
@@ -584,7 +585,7 @@ export const useStore = create<State>((set, get) => ({
     if (!tab?.target || !tab.response || !result?.truncated || tab.running || !isReadOnly(result.statement)) return
     const target = tab.target
     const environment = environmentOf(get().connections.find((c) => c.id === target.connectionId), target.database)
-    const { values } = resolveVariables(tab.variables, environment ? get().settings?.environmentVariables[environment.id] : undefined)
+    const { values } = resolveVariables(tab.variables, environmentValues(get().settings?.environmentVariables, environment?.id))
     const limit = result.rows.length + (get().settings?.rowLimit ?? 1000)
     get().updateTab(tabId, { running: true, runStartedAt: Date.now() })
     let response: RunResponse
@@ -612,7 +613,7 @@ export const useStore = create<State>((set, get) => ({
     const count = (n: number) => `${n.toLocaleString('en-US')} ${n === 1 ? 'row' : 'rows'}`
     if (result.truncated && isReadOnly(result.statement)) {
       const environment = environmentOf(get().connections.find((c) => c.id === tab.target!.connectionId), tab.target.database)
-      const { values } = resolveVariables(tab.variables, environment ? get().settings?.environmentVariables[environment.id] : undefined)
+      const { values } = resolveVariables(tab.variables, environmentValues(get().settings?.environmentVariables, environment?.id))
       const saved = await api.exportQuery(tab.target, result.statement, values, name)
       return saved ? `Saved ${count(saved.rows)}` : null
     }
@@ -627,7 +628,7 @@ export const useStore = create<State>((set, get) => ({
     const environment = environmentOf(get().connections.find((c) => c.id === tab.target!.connectionId), tab.target.database)
     const { values } = resolveVariables(
       tab.variables,
-      environment ? get().settings?.environmentVariables[environment.id] : undefined
+      environmentValues(get().settings?.environmentVariables, environment?.id)
     )
     set({
       pendingRun: {
@@ -648,7 +649,7 @@ export const useStore = create<State>((set, get) => ({
     const environment = environmentOf(get().connections.find((c) => c.id === target.connectionId), target.database)
     const { values: variables } = resolveVariables(
       tab.variables,
-      environment ? get().settings?.environmentVariables[environment.id] : undefined
+      environmentValues(get().settings?.environmentVariables, environment?.id)
     )
 
     // Stop before running anything if a variable this SQL uses has no value yet.
@@ -657,7 +658,7 @@ export const useStore = create<State>((set, get) => ({
       const labels = missing.map((p) => p.label).join(', ')
       const where = environment
         ? `Fill it in above the editor, or set it for ${environment.label} under Environment variables.`
-        : 'Fill it in above the editor.'
+        : 'Fill it in above the editor, or give it a global value under Environment variables.'
       get().updateTab(tabId, {
         missingVariables: missing.map((p) => p.key),
         blockedAt: Date.now(),

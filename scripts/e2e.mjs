@@ -358,6 +358,25 @@ try {
     if ((await field.locator('input').inputValue()) !== '3') throw new Error('reset did not restore the production value')
   })
 
+  await step('global variables apply in every environment', async () => {
+    await setEditor('select :greeting::text as greeting;')
+    await page.locator('.var', { hasText: ':greeting' }).waitFor()
+    await page.getByRole('button', { name: 'Environment variables' }).click()
+    await page.getByLabel('greeting is global').check()
+    if (await page.getByLabel('greeting for Production').count()) throw new Error('a global variable still shows per-environment fields')
+    await page.getByLabel('greeting for every environment').fill('hello')
+    await shot('16b-global-variable')
+    await page.getByRole('button', { name: 'Save', exact: true }).click()
+
+    // This tab's database is marked Production, which has no value of its own for :greeting.
+    const field = page.locator('.var', { hasText: ':greeting' })
+    await field.locator('.env-badge', { hasText: 'GLOBAL' }).waitFor()
+    if ((await field.locator('input').inputValue()) !== 'hello') throw new Error('global value not filled in')
+    await page.locator('.cm-content').click()
+    await page.keyboard.press(`${mod}+Enter`)
+    await page.waitForFunction(() => document.querySelector('.grid-row .grid-cell')?.textContent === 'hello')
+  })
+
   await step('production sessions are read-only on the server', async () => {
     // A function that writes, called from a SELECT: the client can't tell, Postgres can.
     await setEditor(

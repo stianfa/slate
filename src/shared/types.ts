@@ -161,8 +161,16 @@ export interface RunResponse {
 
 export type Theme = 'system' | 'dark' | 'light'
 
-/** Query variable values per environment: { production: { tenant_id: 'acme' } }. */
-export type EnvironmentVariables = Partial<Record<Environment, Record<string, string>>>
+/**
+ * Query variable values per environment: { production: { tenant_id: 'acme' } }. Values under
+ * 'global' apply to every database, marked with an environment or not.
+ */
+export type EnvironmentVariables = Partial<Record<Environment | 'global', Record<string, string>>>
+
+/** The values a database inherits: global ones, overridden by its environment's own. */
+export function environmentValues(vars: EnvironmentVariables | undefined, environment: Environment | undefined) {
+  return { ...vars?.global, ...(environment ? vars?.[environment] : undefined) }
+}
 
 export interface Settings {
   aiEnabled: boolean

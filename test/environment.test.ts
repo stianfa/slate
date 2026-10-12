@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { isReadOnly } from '../src/shared/sql'
-import { environmentOf, withRenamedEnvironments, withRenamedEnvironmentVariables } from '../src/shared/types'
+import { environmentOf, environmentValues, withRenamedEnvironments, withRenamedEnvironmentVariables } from '../src/shared/types'
 
 describe('isReadOnly', () => {
   it('accepts reads and session commands', () => {
@@ -66,5 +66,18 @@ describe('renamed environments', () => {
     expect(withRenamedEnvironmentVariables(saved)).toEqual({ test: { org: '7', tenant: 'tst' }, production: { org: '3' } })
     const current = { production: { org: '3' } }
     expect(withRenamedEnvironmentVariables(current)).toBe(current)
+  })
+})
+
+describe('environmentValues', () => {
+  const vars = { global: { region: 'eu', org: '1' }, production: { org: '3' } }
+  it('adds global values under the environment, which wins', () => {
+    expect(environmentValues(vars, 'production')).toEqual({ region: 'eu', org: '3' })
+    expect(environmentValues(vars, 'test')).toEqual({ region: 'eu', org: '1' })
+  })
+
+  it('gives unmarked databases the global values', () => {
+    expect(environmentValues(vars, undefined)).toEqual({ region: 'eu', org: '1' })
+    expect(environmentValues(undefined, 'production')).toEqual({})
   })
 })

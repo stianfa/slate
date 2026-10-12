@@ -1176,6 +1176,14 @@ select {
   color: var(--env, var(--text-muted));
 }
 
+.var.inherited.global input {
+  color: var(--text-muted);
+}
+
+.env-badge.global {
+  --env: var(--text-muted);
+}
+
 .var .env-badge {
   margin-right: 6px;
 }
@@ -1210,7 +1218,7 @@ select {
 
 .envvars-row {
   display: grid;
-  grid-template-columns: 180px repeat(4, minmax(0, 1fr)) 26px;
+  grid-template-columns: 180px 48px repeat(4, minmax(0, 1fr)) 26px;
   gap: 6px;
   align-items: center;
 }
@@ -1277,6 +1285,27 @@ select {
 .envvars-value::placeholder,
 .envvars-name input::placeholder {
   color: var(--text-faint);
+}
+
+.envvars-global-head {
+  text-align: center;
+}
+
+.envvars-global {
+  display: grid;
+  place-items: center;
+  height: 30px;
+  cursor: pointer;
+}
+
+.envvars-global input {
+  accent-color: var(--accent);
+  width: 15px;
+  height: 15px;
+}
+
+.envvars-value-global {
+  grid-column: span 4;
 }
 
 .envvars-add {

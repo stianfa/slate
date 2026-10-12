@@ -14,6 +14,7 @@ export function VariablesBar({ tab }: { tab: Tab }) {
   const setDialog = useStore((s) => s.setDialog)
   const environment = useEnvironment(tab.target)
   const envValues = useStore((s) => (environment ? s.settings?.environmentVariables[environment.id] : undefined))
+  const globalValues = useStore((s) => s.settings?.environmentVariables.global)
   const variables = useMemo(
     () => (tab.sql.length > MAX_SCAN ? [] : uniqueVariables(findPlaceholders(tab.sql))),
     [tab.sql]
@@ -38,7 +39,10 @@ export function VariablesBar({ tab }: { tab: Tab }) {
       </span>
       {variables.map((v) => {
         const own = tab.variables?.[v.key]
-        const fromEnv = envValues?.[v.key]
+        // The environment's own value wins over a global one.
+        const isGlobal = envValues?.[v.key] === undefined && globalValues?.[v.key] !== undefined
+        const fromEnv = isGlobal ? globalValues?.[v.key] : envValues?.[v.key]
+        const source = isGlobal ? 'global' : environment?.label
         const inherited = own === undefined && fromEnv !== undefined
         const value = own !== undefined ? own : fromEnv
         const isNull = value === null
@@ -46,7 +50,7 @@ export function VariablesBar({ tab }: { tab: Tab }) {
         return (
           <div
             key={v.key}
-            className={`var${missing ? ' missing' : ''}${isNull ? ' is-null' : ''}${inherited ? ' inherited' : ''}`}
+            className={`var${missing ? ' missing' : ''}${isNull ? ' is-null' : ''}${inherited ? ' inherited' : ''}${isGlobal ? ' global' : ''}`}
           >
             <span className="var-name">{v.label}</span>
             <input
@@ -67,15 +71,22 @@ export function VariablesBar({ tab }: { tab: Tab }) {
                 }
               }}
               aria-label={`Value for ${v.label}`}
-              title={inherited && environment ? `From ${environment.label}. Type to use a different value in this tab.` : undefined}
+              title={inherited ? `${isGlobal ? 'Global value' : `From ${source}`}. Type to use a different value in this tab.` : undefined}
             />
-            {inherited && environment && <EnvBadge env={environment} />}
-            {!inherited && fromEnv !== undefined && environment && (
+            {inherited &&
+              (isGlobal ? (
+                <span className="env-badge global" title="Global variable">
+                  GLOBAL
+                </span>
+              ) : (
+                environment && <EnvBadge env={environment} />
+              ))}
+            {!inherited && fromEnv !== undefined && (
               <button
                 className="var-reset"
                 onClick={() => setVariable(tab.id, v.key, undefined)}
-                title={`Use the ${environment.label} value (${fromEnv})`}
-                aria-label={`Use the ${environment.label} value`}
+                title={`Use the ${source} value (${fromEnv})`}
+                aria-label={`Use the ${source} value`}
               >
                 <RotateCcw size={11} />
               </button>
@@ -94,7 +105,7 @@ export function VariablesBar({ tab }: { tab: Tab }) {
       <button
         className="ghost-btn vars-env"
         onClick={() => setDialog({ type: 'envVariables', suggest: variables.filter((v) => !v.key.startsWith('$')).map((v) => v.key) })}
-        title="Set values per environment (Local, Development, Test, Production)"
+        title="Set values per environment (Local, Development, Test, Production) or globally"
       >
         <SlidersHorizontal size={12} /> Environment variables
       </button>
