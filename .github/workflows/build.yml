@@ -27,6 +27,31 @@ jobs:
           npm run db &
           for i in $(seq 1 60); do (echo > /dev/tcp/127.0.0.1/55432) 2>/dev/null && break; sleep 1; done
           npm test
+      # The same self-signed certificate on every build keeps the signature stable, so macOS lets
+      # new versions read the passwords and API key that earlier ones saved in the keychain.
+      - name: Import the Mac signing certificate
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          MAC_CERT_P12: ${{ secrets.MAC_CERT_P12 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+        run: |
+          if [ -z "$MAC_CERT_P12" ]; then
+            echo "::warning::MAC_CERT_P12 is not set, so this build is ad-hoc signed and loses keychain access after an update."
+            exit 0
+          fi
+          KEYCHAIN="$RUNNER_TEMP/slate-signing.keychain-db"
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 16)
+          echo "$MAC_CERT_P12" | base64 --decode > "$RUNNER_TEMP/slate.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/slate.p12" -k "$KEYCHAIN" -P "$MAC_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/slate.p12"
+          echo "SLATE_SIGN_IDENTITY=Slate Self-Signed" >> "$GITHUB_ENV"
+          echo "SLATE_SIGN_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
       - name: Package
         shell: bash
         run: |
