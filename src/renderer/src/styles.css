@@ -1709,6 +1709,23 @@ select {
   z-index: 3;
 }
 
+/* Field names down the side of a transposed result. */
+.grid-rowhead {
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 0 10px;
+  font-family: var(--font-mono);
+}
+
+.grid-rowhead .grid-head-name {
+  min-width: 0;
+}
+
+.grid-rowhead .grid-head-type {
+  flex-shrink: 0;
+  max-width: 45%;
+}
+
 .grid-row.row-selected .grid-rownum {
   color: var(--accent);
 }

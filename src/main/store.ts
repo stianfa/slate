@@ -3,7 +3,8 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ConnectionConfig, ConnectionInput, EnvironmentVariables, Settings, SettingsInput, Theme } from '@shared/types'
-import { withRenamedEnvironments, withRenamedEnvironmentVariables } from '@shared/types'
+import { DEFAULT_AI_API_VERSION, withRenamedEnvironments, withRenamedEnvironmentVariables } from '@shared/types'
+import type { AiConfig } from './ai'
 import type { ResolvedConnection } from './db'
 
 interface StoredConnection extends Omit<ConnectionConfig, 'hasPassword'> {
@@ -12,16 +13,20 @@ interface StoredConnection extends Omit<ConnectionConfig, 'hasPassword'> {
 
 interface StoredSettings {
   aiEnabled: boolean
-  aiModel: string
+  aiEndpoint: string
+  aiDeployment: string
+  aiApiVersion: string
   rowLimit: number
   theme: Theme
   environmentVariables: EnvironmentVariables
-  apiKey?: string
+  aiApiKey?: string
 }
 
 const DEFAULT_SETTINGS: StoredSettings = {
   aiEnabled: true,
-  aiModel: 'claude-opus-5-5',
+  aiEndpoint: '',
+  aiDeployment: '',
+  aiApiVersion: '',
   rowLimit: 1000,
   theme: 'system',
   environmentVariables: {}
@@ -53,9 +58,15 @@ function readJson<T>(file: string, fallback: T): T {
 }
 
 function readSettings(file: string): StoredSettings {
-  const settings: StoredSettings = { ...DEFAULT_SETTINGS, ...readJson(file, {}) }
+  const settings: StoredSettings & { aiModel?: string; apiKey?: string } = { ...DEFAULT_SETTINGS, ...readJson(file, {}) }
+  // An Anthropic model and key from before the switch to Azure OpenAI; they don't apply anymore.
+  delete settings.aiModel
+  delete settings.apiKey
   return { ...settings, environmentVariables: withRenamedEnvironmentVariables(settings.environmentVariables ?? {}) }
 }
+
+// The same variables monocasi's services read, for dev runs and setups without Settings.
+const env = (name: string) => process.env[name]?.trim() || ''
 
 function writeJson(file: string, value: unknown) {
   const tmp = `${file}.tmp`
@@ -117,17 +128,24 @@ export class Store {
   }
 
   getSettings(): Settings {
-    const { apiKey, ...rest } = this.settings
+    const { aiApiKey, ...rest } = this.settings
     return {
       ...rest,
-      apiKeySource: apiKey ? 'settings' : process.env.ANTHROPIC_API_KEY ? 'env' : null
+      aiFallback: {
+        endpoint: env('AI_FOUNDRY_URL'),
+        deployment: env('AI_FOUNDRY_MODEL'),
+        apiVersion: env('AI_FOUNDRY_API_VERSION') || DEFAULT_AI_API_VERSION
+      },
+      aiKeySource: aiApiKey ? 'settings' : env('AI_FOUNDRY_API_KEY') ? 'env' : null,
+      aiReady: this.aiConfig() !== null
     }
   }
 
   saveSettings(input: SettingsInput): Settings {
-    const { apiKey, ...rest } = input
+    const { aiApiKey, ...rest } = input
     const next: StoredSettings = { ...this.settings, ...rest }
-    if (apiKey !== undefined) next.apiKey = apiKey ? seal(apiKey.trim()) : undefined
+    for (const key of ['aiEndpoint', 'aiDeployment', 'aiApiVersion'] as const) next[key] = next[key].trim()
+    if (aiApiKey !== undefined) next.aiApiKey = aiApiKey ? seal(aiApiKey.trim()) : undefined
     this.settings = next
     writeJson(this.settingsFile, next)
     return this.getSettings()
@@ -149,12 +167,14 @@ export class Store {
     renameSync(tmp, this.workspaceFile)
   }
 
-  apiKey(): string | null {
-    return unseal(this.settings.apiKey) ?? process.env.ANTHROPIC_API_KEY ?? null
-  }
-
-  aiModel(): string {
-    return this.settings.aiModel
+  /** Settings win over the AI_FOUNDRY_* variables, field by field. Null until endpoint, deployment and key are set. */
+  aiConfig(): AiConfig | null {
+    const s = this.settings
+    const endpoint = s.aiEndpoint || env('AI_FOUNDRY_URL')
+    const deployment = s.aiDeployment || env('AI_FOUNDRY_MODEL')
+    const apiVersion = s.aiApiVersion || env('AI_FOUNDRY_API_VERSION') || DEFAULT_AI_API_VERSION
+    const apiKey = unseal(s.aiApiKey) || env('AI_FOUNDRY_API_KEY')
+    return endpoint && deployment && apiKey ? { endpoint, deployment, apiVersion, apiKey } : null
   }
 
   aiEnabled(): boolean {

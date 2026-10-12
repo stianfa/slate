@@ -105,10 +105,10 @@ function AiStatus() {
   const settings = useStore((s) => s.settings)
   const ai = useStore((s) => s.ai)
   const setDialog = useStore((s) => s.setDialog)
-  const off = !settings?.aiEnabled || !settings.apiKeySource
+  const off = !settings?.aiEnabled || !settings.aiReady
   const label = off
     ? settings?.aiEnabled
-      ? 'AI needs an API key'
+      ? 'AI needs setup'
       : 'AI off'
     : ai.status === 'error'
       ? 'AI error'

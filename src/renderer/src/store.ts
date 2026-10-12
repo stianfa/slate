@@ -68,6 +68,8 @@ export interface Tab {
   runSql?: string
   response?: RunResponse
   activeResult?: number
+  /** Results shown with columns as rows, one column per row. */
+  transposed?: boolean
 }
 
 export interface PendingRun {

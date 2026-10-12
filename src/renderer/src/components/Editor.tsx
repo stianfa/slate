@@ -70,7 +70,7 @@ let latestRequest = ''
 const ghostSource: GhostSource = {
   enabled() {
     const s = useStore.getState()
-    return Boolean(s.settings?.aiEnabled && s.settings.apiKeySource && activeTab(s)?.target)
+    return Boolean(s.settings?.aiEnabled && s.settings.aiReady && activeTab(s)?.target)
   },
   async fetch(prefix, suffix, signal) {
     const tab = activeTab(useStore.getState())

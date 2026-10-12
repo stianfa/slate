@@ -150,7 +150,9 @@ function TableNode({ target, table, depth, filtering }: { target: Target; table:
 
 function DatabaseNode({ connection, database, depth }: { connection: ConnectionConfig; database: string; depth: number }) {
   const target = useMemo(() => ({ connectionId: connection.id, database }), [connection.id, database])
+  // The connection row already shows its own mark; a database only shows one that differs.
   const environment = environmentOf(connection, database)
+  const ownEnvironment = environment?.id === connection.environment ? null : environment
   const key = `d:${targetKey(target)}`
   const open = useStore((s) => Boolean(s.expanded[key]))
   const schema = useStore((s) => s.schemas[targetKey(target)])
@@ -192,7 +194,7 @@ function DatabaseNode({ connection, database, depth }: { connection: ConnectionC
         label={
           <>
             {database}
-            {environment && <EnvBadge env={environment} />}
+            {ownEnvironment && <EnvBadge env={ownEnvironment} />}
           </>
         }
         className={`database${isCurrent ? ' current' : ''}`}

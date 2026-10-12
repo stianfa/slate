@@ -4,3 +4,6 @@ dist/
 dev/.pgdata/
 *.log
 test-results/
+# Local AI_FOUNDRY_* values and other secrets
+.env*
+!.env.example

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { AlertCircle, Check, ChevronDown, Copy, Download, Info, Square, Unlock } from 'lucide-react'
+import { AlertCircle, ArrowRightLeft, Check, ChevronDown, Copy, Download, Info, Square, Unlock } from 'lucide-react'
 import { isReadOnly } from '@shared/sql'
 import type { ResultField } from '@shared/types'
 import { api, modKey } from '../api'
@@ -166,7 +166,13 @@ export function Results({ tab }: { tab: Tab }) {
       </div>
     )
   } else if (result && result.fields.length > 0) {
-    body = <DataGrid result={result} onOpenValue={(value, field) => setViewing({ value, field })} />
+    body = (
+      <DataGrid
+        result={result}
+        transposed={Boolean(tab.transposed)}
+        onOpenValue={(value, field) => setViewing({ value, field })}
+      />
+    )
   } else if (result) {
     body = (
       <div className="results-scroll">
@@ -246,6 +252,14 @@ export function Results({ tab }: { tab: Tab }) {
             <>
               {saving && <Spinner />}
               {copied && <span className="copied">{copied}</span>}
+              <button
+                className={`ghost-btn${tab.transposed ? ' active' : ''}`}
+                onClick={() => updateTab(tab.id, { transposed: !tab.transposed })}
+                aria-pressed={Boolean(tab.transposed)}
+                title={tab.transposed ? 'Show rows as rows again' : 'Show each row as a column, with the column names down the side'}
+              >
+                <ArrowRightLeft size={13} /> Transpose
+              </button>
               <CopyMenu onCopy={(f) => void copy(f)} onSave={() => void save()} />
             </>
           )}

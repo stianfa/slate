@@ -19,7 +19,7 @@
     "dist:mac": "npm run build && electron-builder --mac --publish never"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.133.0",
+    "openai": "^7.32.0",
     "pg": "^8.23.1",
     "pg-cursor": "^2.22.1"
   },

@@ -1,7 +1,31 @@
-import Anthropic from '@anthropic-ai/sdk'
+import {
+  APIConnectionError,
+  APIError,
+  APIUserAbortError,
+  AuthenticationError,
+  AzureOpenAI,
+  NotFoundError,
+  PermissionDeniedError,
+  RateLimitError
+} from 'openai'
 
-// Models that take server-side refusal fallbacks ("default" routes by refusal category).
-const FALLBACK_MODELS = new Set(['claude-opus-5-5', 'claude-sonnet-5-5'])
+/** An Azure OpenAI deployment in Azure AI Foundry, set in Settings or through AI_FOUNDRY_* variables. */
+export interface AiConfig {
+  endpoint: string
+  deployment: string
+  apiVersion: string
+  apiKey: string
+}
+
+// The SDK wants the resource URL. Accept a full request URL too, like the AI_FOUNDRY_URL values
+// that end in /openai/responses?api-version=..., and keep only its origin.
+function resourceUrl(endpoint: string): string {
+  try {
+    return new URL(endpoint).origin
+  } catch {
+    return endpoint
+  }
+}
 
 const INSTRUCTIONS = `You are the inline autocomplete engine inside a PostgreSQL query editor. The user is writing SQL and you predict the text they will type next at <cursor/>.
 
@@ -43,49 +67,44 @@ export function cleanCompletion(raw: string, prefix: string, suffix: string): st
 }
 
 export class AiCompleter {
-  private client: Anthropic | null = null
+  private client: AzureOpenAI | null = null
   private clientKey: string | null = null
   private inflight = new Map<string, AbortController>()
 
-  constructor(
-    private apiKey: () => string | null,
-    private model: () => string
-  ) {}
+  constructor(private config: () => AiConfig | null) {}
 
-  private getClient(): Anthropic {
-    const key = this.apiKey()
+  private getClient(config: AiConfig): AzureOpenAI {
+    const key = JSON.stringify(config)
     if (!this.client || key !== this.clientKey) {
-      // Without a key the SDK falls back to ANTHROPIC_API_KEY or an `ant auth login` profile.
-      this.client = new Anthropic(key ? { apiKey: key, maxRetries: 1 } : { maxRetries: 1 })
+      this.client = new AzureOpenAI({
+        apiKey: config.apiKey,
+        endpoint: resourceUrl(config.endpoint),
+        deployment: config.deployment,
+        apiVersion: config.apiVersion,
+        maxRetries: 1
+      })
       this.clientKey = key
     }
     return this.client
   }
 
-  private async send(
-    system: Anthropic.TextBlockParam[],
-    content: string,
-    signal?: AbortSignal
-  ): Promise<{ text: string; refused: boolean }> {
-    const model = this.model()
-    const params = {
-      model,
-      max_tokens: 4096,
-      output_config: { effort: 'low' as const },
-      system,
-      messages: [{ role: 'user' as const, content }]
-    }
-    const client = this.getClient()
-    const response = FALLBACK_MODELS.has(model)
-      ? await client.beta.messages.create(
-          { ...params, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' },
-          { signal }
-        )
-      : await client.messages.create(params, { signal })
-    if (response.stop_reason === 'refusal') return { text: '', refused: true }
-    let text = ''
-    for (const block of response.content) if (block.type === 'text') text += block.text
-    return { text, refused: false }
+  private async send(system: string, content: string, signal?: AbortSignal): Promise<string> {
+    const config = this.config()
+    if (!config) throw new Error('AI is not set up: add the Azure endpoint, deployment and API key in Settings.')
+    // Azure caches repeated prompt prefixes by itself, so the schema goes first, in the system message.
+    const response = await this.getClient(config).responses.create(
+      {
+        model: config.deployment,
+        reasoning: { effort: 'low' },
+        max_output_tokens: 4096,
+        input: [
+          { role: 'system', content: system },
+          { role: 'user', content }
+        ]
+      },
+      { signal }
+    )
+    return response.output_text
   }
 
   async complete(requestId: string, schemaText: string, prefix: string, suffix: string): Promise<string | null> {
@@ -94,15 +113,11 @@ export class AiCompleter {
     try {
       const before = prefix.slice(-MAX_PREFIX)
       const after = suffix.slice(0, MAX_SUFFIX)
-      const system: Anthropic.TextBlockParam[] = [
-        // The schema rarely changes between keystrokes, so it is cached.
-        { type: 'text', text: INSTRUCTIONS + schemaText, cache_control: { type: 'ephemeral' } }
-      ]
       const content = `<editor>\n${before}<cursor/>${after}\n</editor>`
-      const { text } = await this.send(system, content, controller.signal)
+      const text = await this.send(INSTRUCTIONS + schemaText, content, controller.signal)
       return cleanCompletion(text, before, after)
     } catch (e) {
-      if (controller.signal.aborted || e instanceof Anthropic.APIUserAbortError) return null
+      if (controller.signal.aborted || e instanceof APIUserAbortError) return null
       throw e
     } finally {
       this.inflight.delete(requestId)
@@ -114,21 +129,17 @@ export class AiCompleter {
   }
 
   async test(): Promise<string> {
-    const { text, refused } = await this.send(
-      [{ type: 'text', text: 'Reply with the single word OK.' }],
-      'Are you there?'
-    )
-    if (refused) throw new Error('The model declined the test request.')
+    const text = await this.send('Reply with the single word OK.', 'Are you there?')
     return text.trim() || 'OK'
   }
 }
 
 export function describeAiError(e: unknown): string {
-  if (e instanceof Anthropic.AuthenticationError) return 'The Anthropic API key was rejected.'
-  if (e instanceof Anthropic.PermissionDeniedError) return 'This API key cannot use the selected model.'
-  if (e instanceof Anthropic.NotFoundError) return 'The selected model was not found.'
-  if (e instanceof Anthropic.RateLimitError) return 'Rate limited by the Anthropic API. Try again shortly.'
-  if (e instanceof Anthropic.APIConnectionError) return 'Could not reach the Anthropic API.'
-  if (e instanceof Anthropic.APIError) return `Anthropic API error ${e.status ?? ''}: ${e.message}`
+  if (e instanceof AuthenticationError) return 'The Azure API key was rejected.'
+  if (e instanceof PermissionDeniedError) return 'This API key cannot use the deployment.'
+  if (e instanceof NotFoundError) return 'Deployment not found. Check the endpoint and deployment name in Settings.'
+  if (e instanceof RateLimitError) return 'Rate limited by Azure. Try again shortly.'
+  if (e instanceof APIConnectionError) return 'Could not reach the Azure endpoint.'
+  if (e instanceof APIError) return `Azure OpenAI error ${e.status ?? ''}: ${e.message}`
   return e instanceof Error ? e.message : String(e)
 }

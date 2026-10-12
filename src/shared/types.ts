@@ -174,9 +174,16 @@ export function environmentValues(vars: EnvironmentVariables | undefined, enviro
 
 export interface Settings {
   aiEnabled: boolean
-  aiModel: string
-  /** Where the Anthropic key comes from, if anywhere. */
-  apiKeySource: 'settings' | 'env' | null
+  /** Azure resource URL, deployment name and API version; empty means the AI_FOUNDRY_* value applies. */
+  aiEndpoint: string
+  aiDeployment: string
+  aiApiVersion: string
+  /** What applies when a field above is empty: the AI_FOUNDRY_* variables, or the default API version. */
+  aiFallback: { endpoint: string; deployment: string; apiVersion: string }
+  /** Where the Azure API key comes from, if anywhere. */
+  aiKeySource: 'settings' | 'env' | null
+  /** Endpoint, deployment and key are all set. */
+  aiReady: boolean
   rowLimit: number
   theme: Theme
   environmentVariables: EnvironmentVariables
@@ -184,12 +191,14 @@ export interface Settings {
 
 export interface SettingsInput {
   aiEnabled?: boolean
-  aiModel?: string
+  aiEndpoint?: string
+  aiDeployment?: string
+  aiApiVersion?: string
   rowLimit?: number
   theme?: Theme
   environmentVariables?: EnvironmentVariables
-  /** New key; undefined keeps the stored one, null or '' clears it. */
-  apiKey?: string | null
+  /** New Azure API key; undefined keeps the stored one, null or '' clears it. */
+  aiApiKey?: string | null
 }
 
 export interface CompletionRequest {
@@ -199,10 +208,7 @@ export interface CompletionRequest {
   suffix: string
 }
 
-export const AI_MODELS = [
-  { id: 'claude-opus-5-5', label: 'Claude Opus 5.5' },
-  { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5' },
-  { id: 'claude-haiku-5-5', label: 'Claude Haiku 5.5 (fastest, cheapest)' }
-] as const
+/** The Azure OpenAI API version used when neither Settings nor AI_FOUNDRY_API_VERSION sets one. */
+export const DEFAULT_AI_API_VERSION = '2025-04-01-preview'
 
 export type TestResult = { ok: true; message: string } | { ok: false; message: string }

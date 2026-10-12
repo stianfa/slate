@@ -107,10 +107,7 @@ function registerIpc() {
   const store = new Store()
   const manager = new DbManager((id) => store.resolve(id))
   db = manager
-  const ai = new AiCompleter(
-    () => store.apiKey(),
-    () => store.aiModel()
-  )
+  const ai = new AiCompleter(() => store.aiConfig())
 
   const api: Api = {
     listConnections: async () => store.listConnections(),
@@ -146,7 +143,7 @@ function registerIpc() {
     testAi: async () => {
       try {
         await ai.test()
-        return { ok: true, message: `Working · ${store.aiModel()}` }
+        return { ok: true, message: `Working · ${store.aiConfig()?.deployment}` }
       } catch (e) {
         return { ok: false, message: describeAiError(e) }
       }

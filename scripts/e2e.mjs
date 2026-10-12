@@ -1,5 +1,5 @@
 // Drives the built app with Playwright against the sample database (`npm run db`).
-// The Anthropic API is replaced by a local mock via ANTHROPIC_BASE_URL, so no key is needed.
+// Azure OpenAI is replaced by a local mock via AI_FOUNDRY_URL, so no key is needed.
 // Screenshots land in test-results/e2e.
 import { createServer } from 'node:http'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
@@ -14,7 +14,7 @@ const shots = join(process.cwd(), 'test-results', 'e2e')
 mkdirSync(shots, { recursive: true })
 const port = process.env.SLATE_DEV_PG_PORT ?? '55432'
 
-// ---- Mock Anthropic API ----
+// ---- Mock Azure OpenAI (Responses API) ----
 const aiRequests = []
 const mock = createServer((req, res) => {
   let body = ''
@@ -22,7 +22,7 @@ const mock = createServer((req, res) => {
   req.on('end', () => {
     const json = JSON.parse(body || '{}')
     aiRequests.push({ url: req.url, headers: req.headers, body: json })
-    const prompt = JSON.stringify(json.messages ?? [])
+    const prompt = JSON.stringify(json.input ?? [])
     let text = 'OK'
     if (prompt.includes('<cursor/>')) {
       text = prompt.includes('from users <cursor/>') ? 'where is_admin = true' : ''
@@ -30,14 +30,21 @@ const mock = createServer((req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' })
     res.end(
       JSON.stringify({
-        id: 'msg_test',
-        type: 'message',
-        role: 'assistant',
+        id: 'resp_test',
+        object: 'response',
+        created_at: 0,
+        status: 'completed',
         model: json.model,
-        content: [{ type: 'text', text }],
-        stop_reason: 'end_turn',
-        stop_sequence: null,
-        usage: { input_tokens: 10, output_tokens: 5 }
+        output: [
+          {
+            type: 'message',
+            id: 'msg_test',
+            status: 'completed',
+            role: 'assistant',
+            content: [{ type: 'output_text', text, annotations: [] }]
+          }
+        ],
+        usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 }
       })
     )
   })
@@ -57,8 +64,11 @@ async function launch() {
     env: {
       ...process.env,
       SLATE_USER_DATA: userData,
-      ANTHROPIC_BASE_URL: mockUrl,
-      ANTHROPIC_API_KEY: 'test-key',
+      // A full request URL, like monocasi's AI_FOUNDRY_URL values: only its origin should be used.
+      AI_FOUNDRY_URL: `${mockUrl}/openai/responses?api-version=2025-04-01-preview`,
+      AI_FOUNDRY_MODEL: 'slate-test-deployment',
+      AI_FOUNDRY_API_KEY: 'test-key',
+      AI_FOUNDRY_API_VERSION: '',
       ELECTRON_RENDERER_URL: ''
     }
   })
@@ -77,6 +87,19 @@ const step = async (name, fn) => {
 }
 const shot = (name) => page.screenshot({ path: join(shots, `${name}.png`) })
 const mod = process.platform === 'darwin' ? 'Meta' : 'Control'
+
+// The row's buttons only show while it is hovered, and a hover can miss while a dialog is still
+// fading out over the sidebar, so hover again until the button is there.
+async function editConnection() {
+  const row = page.locator('.tree-row.connection')
+  const button = row.getByTitle('Edit connection')
+  for (let i = 0; i < 10 && !(await button.isVisible()); i++) {
+    await page.mouse.move(0, 0)
+    await row.hover()
+    await page.waitForTimeout(100)
+  }
+  await button.click()
+}
 
 async function setEditor(text) {
   await page.locator('.cm-content').click()
@@ -136,6 +159,31 @@ try {
     const value = await page.locator('.value-view').textContent()
     if (!value.includes('\n  "beta"')) throw new Error(`json not pretty printed: ${value}`)
     await page.keyboard.press('Escape')
+  })
+
+  await step('transpose a result', async () => {
+    await setEditor('select id, email, is_admin from users order by id limit 2;')
+    await page.keyboard.press(`${mod}+Enter`)
+    await page.locator('.results-summary', { hasText: '2 rows' }).waitFor()
+    await page.getByRole('button', { name: 'Transpose' }).click()
+    await page.locator('.grid-rowhead', { hasText: 'email' }).waitFor()
+    if ((await page.locator('.grid-rowhead').count()) !== 3) throw new Error('expected one row per column')
+    await page.locator('.grid-head', { hasText: 'Row 2' }).waitFor()
+    if (!/^\d+$/.test(await page.locator('.grid-row').first().locator('.grid-cell').first().textContent())) {
+      throw new Error('the first row should hold the ids')
+    }
+    await shot('07b-transposed')
+
+    // A long result turns into many columns; only those in view are drawn.
+    await setEditor('select * from products order by id limit 100;')
+    await page.keyboard.press(`${mod}+Enter`)
+    await page.locator('.grid-head', { hasText: 'Row 1' }).waitFor()
+    if ((await page.locator('.grid-head').count()) >= 100) throw new Error('every column was drawn')
+    await page.locator('.grid').evaluate((el) => (el.scrollLeft = el.scrollWidth))
+    await page.locator('.grid-head', { hasText: 'Row 100' }).waitFor()
+
+    await page.getByRole('button', { name: 'Transpose' }).click()
+    await page.locator('.grid-head', { hasText: 'sku' }).waitFor()
   })
 
   await step('load more rows and save the full result', async () => {
@@ -250,13 +298,14 @@ try {
     await page.keyboard.press('Tab')
     const doc = await page.locator('.cm-content').textContent()
     if (!doc.includes('select email from users where is_admin = true')) throw new Error(`doc was: ${doc}`)
-    const completion = aiRequests.find((r) => JSON.stringify(r.body.messages).includes('<cursor/>'))
+    const completion = aiRequests.find((r) => JSON.stringify(r.body.input).includes('<cursor/>'))
     if (!completion) throw new Error('no completion request reached the mock')
-    if (completion.body.model !== 'claude-opus-5-5') throw new Error(`model ${completion.body.model}`)
-    if (completion.body.fallbacks !== 'default') throw new Error('fallbacks not set')
-    if (!String(completion.headers['anthropic-beta']).includes('server-side-fallback-2026-07-01')) throw new Error('beta header missing')
-    if (!completion.body.system[0].text.includes('public.users: id bigint PK')) throw new Error('schema missing from prompt')
-    if (completion.headers['x-api-key'] !== 'test-key') throw new Error('api key not sent')
+    if (completion.url !== '/openai/responses?api-version=2025-04-01-preview') throw new Error(`url ${completion.url}`)
+    if (completion.body.model !== 'slate-test-deployment') throw new Error(`model ${completion.body.model}`)
+    if (completion.body.reasoning?.effort !== 'low') throw new Error('reasoning effort not low')
+    const system = completion.body.input.find((m) => m.role === 'system')
+    if (!system?.content.includes('public.users: id bigint PK')) throw new Error('schema missing from prompt')
+    if (completion.headers['api-key'] !== 'test-key') throw new Error('api key not sent')
   })
 
   await step('schema completion offers columns', async () => {
@@ -308,8 +357,7 @@ try {
   })
 
   await step('mark a database as production', async () => {
-    await page.locator('.tree-row.connection').hover()
-    await page.locator('.tree-row.connection').getByTitle('Edit connection').click()
+    await editConnection()
     await page.getByLabel('Environment for shop').selectOption('production')
     await shot('12-environment-dialog')
     await page.getByRole('button', { name: 'Save', exact: true }).click()
@@ -340,6 +388,24 @@ try {
     await page.locator('.results-summary', { hasText: '1 row' }).waitFor()
     if (await page.locator('.dialog.danger').count()) throw new Error('a read asked for confirmation')
     await shot('14-production-tab')
+  })
+
+  await step('a marked connection shows its badge once', async () => {
+    await editConnection()
+    await page.getByRole('group', { name: 'Environment' }).getByRole('button', { name: 'Test' }).click()
+    await page.getByRole('button', { name: 'Save', exact: true }).click()
+    await page.locator('.tree-row.connection .env-badge', { hasText: 'TEST' }).waitFor()
+    // Databases that only inherit the mark don't repeat it; shop keeps its own Production mark.
+    await page.locator('.tree-row.database', { hasText: 'shop' }).locator('.env-badge', { hasText: 'PROD' }).waitFor()
+    if (await page.locator('.tree-row.database', { hasText: 'scratch' }).locator('.env-badge').count()) {
+      throw new Error('scratch repeats the connection badge')
+    }
+    await shot('14b-connection-badge')
+
+    await editConnection()
+    await page.getByRole('group', { name: 'Environment' }).getByRole('button', { name: 'None' }).click()
+    await page.getByRole('button', { name: 'Save', exact: true }).click()
+    await page.locator('.tree-row.connection .env-badge').waitFor({ state: 'detached' })
   })
 
   await step('environment variables fill in per environment', async () => {
@@ -548,6 +614,11 @@ try {
 
   await step('light theme', async () => {
     await page.getByRole('button', { name: 'Settings' }).click()
+    // The AI fields come from AI_FOUNDRY_* here, so Settings shows them as environment values.
+    await page.getByText('Using AI_FOUNDRY_URL from the environment.').waitFor()
+    await page.getByText('Using AI_FOUNDRY_API_KEY from the environment.').waitFor()
+    await page.waitForTimeout(500) // let the dialog finish fading in
+    await shot('23-settings-ai')
     await page.getByRole('button', { name: 'Light' }).click()
     await page.keyboard.press('Escape')
     await page.locator('.history-item', { hasText: 'orders' }).click()
