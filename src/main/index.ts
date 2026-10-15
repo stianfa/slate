@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { CHAT_DELTA, SAVE_WORKSPACE_NOW, type Api } from '@shared/api'
 import { connectionChanged } from '@shared/types'
 import { AiCompleter, describeAiError } from './ai'
-import { DbManager } from './db'
+import { DbManager, explainConnectError } from './db'
 import { describeSchema } from './schemaText'
 import { Store } from './store'
 
@@ -128,7 +128,8 @@ function registerIpc() {
         const version = await manager.test({ ...input, password: store.passwordFor(input) })
         return { ok: true, message: `Connected · PostgreSQL ${version}` }
       } catch (e) {
-        return { ok: false, message: e instanceof Error ? e.message : String(e) }
+        const message = e instanceof Error ? e.message : String(e)
+        return { ok: false, message: explainConnectError(message, 'Type it in the Password field.') }
       }
     },
     connect: (id) => manager.connect(id),
@@ -208,7 +209,7 @@ function registerIpc() {
       try {
         return { value: await fn(...args) }
       } catch (e) {
-        return { error: e instanceof Error ? e.message : String(e) }
+        return { error: explainConnectError(e instanceof Error ? e.message : String(e)) }
       }
     })
   }

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import pg from 'pg'
-import { DbManager } from '../src/main/db'
+import { DbManager, explainConnectError } from '../src/main/db'
 import { describeSchema } from '../src/main/schemaText'
 import type { ConnectionConfig } from '../src/shared/types'
 
@@ -194,5 +194,23 @@ describe.skipIf(!up)('DbManager against the sample database', () => {
   it('switches database when the tab target changes', async () => {
     const r = await db.run('t6', { connectionId: 'local', database: 'scratch' }, 'select current_database()', 100)
     expect(r.results[0].rows).toEqual([['scratch']])
+  })
+})
+
+describe('explainConnectError', () => {
+  it("replaces pg's SCRAM error for a missing password", () => {
+    const message = explainConnectError('SASL: SCRAM-SERVER-FIRST-MESSAGE: client password must be a string')
+    expect(message).toBe(
+      'No password is saved for this connection, and the server asks for one. Open Edit connection and type the password.'
+    )
+    expect(explainConnectError('SASL: SCRAM-SERVER-FIRST-MESSAGE: client password must be a string', 'Type it.')).toMatch(
+      /asks for one\. Type it\.$/
+    )
+  })
+
+  it('leaves other errors alone', () => {
+    expect(explainConnectError('password authentication failed for user "slate"')).toBe(
+      'password authentication failed for user "slate"'
+    )
   })
 })

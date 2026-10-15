@@ -89,13 +89,22 @@ function write(out: WriteStream, chunk: string) {
   return new Promise<void>((resolve, reject) => out.write(chunk, (err) => (err ? reject(err) : resolve())))
 }
 
+/**
+ * pg's SCRAM login fails with a protocol message when it has no password to send (none saved,
+ * no PGPASSWORD or ~/.pgpass). Says what to do instead; other messages pass through.
+ */
+export function explainConnectError(message: string, fix = 'Open Edit connection and type the password.'): string {
+  if (!message.includes('client password must be a string')) return message
+  return `No password is saved for this connection, and the server asks for one. ${fix}`
+}
+
 function toQueryError(e: unknown, statement: Statement | null, bound?: BoundStatement): QueryError {
   const err = e as pg.DatabaseError & Error
   // Postgres reports a 1-based position in the text it received; map it back through variable rewriting.
   const received = Number(err.position) - 1
   const position = statement && err.position ? statement.from + (bound ? bound.map(received) : received) : undefined
   return {
-    message: err.message || String(e),
+    message: explainConnectError(err.message || String(e)),
     detail: err.detail,
     hint: err.hint,
     code: err.code,
