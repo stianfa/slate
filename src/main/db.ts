@@ -1,6 +1,7 @@
 import { createWriteStream, type WriteStream } from 'node:fs'
 import pg from 'pg'
 import Cursor from 'pg-cursor'
+import type { ChangeStatement } from '@shared/changes'
 import { leadingKeyword, splitStatements, type Statement } from '@shared/sql'
 import { bindVariables, type BoundStatement, type VariableValues } from '@shared/variables'
 import {
@@ -427,6 +428,55 @@ export class DbManager {
       notices: session.notices,
       txStatus: session.txStatus,
       durationMs: performance.now() - started
+    }
+  }
+
+  /**
+   * Saves changes made in the grid on the tab's session, all or nothing: inside a savepoint when a
+   * transaction is open, so a failure leaves that transaction usable, otherwise in a transaction of
+   * their own. A statement that touches a different number of rows than expected (a row changed or
+   * deleted since it was loaded) undoes them all.
+   */
+  async applyChanges(tabId: string, target: Target, changes: ChangeStatement[]): Promise<RunResponse> {
+    const status = this.sessions.get(tabId)?.txStatus ?? 'idle'
+    if (status === 'failed') {
+      const message = 'The open transaction has failed, so nothing was saved. Roll it back first.'
+      return { results: [], error: { message }, notices: [], txStatus: status, durationMs: 0 }
+    }
+    const nested = status === 'transaction'
+    const begin = await this.run(tabId, target, nested ? 'SAVEPOINT slate_changes' : 'BEGIN', 0)
+    if (begin.error) return begin
+    const limit = Math.max(1, ...changes.map((c) => c.rows))
+    const response = await this.run(tabId, target, changes.map((c) => c.sql).join(';\n'), limit)
+    // Positions point into the generated statements, which nobody sees.
+    let error: QueryError | null = response.error ? { ...response.error, position: undefined } : null
+    if (!error) {
+      const i = response.results.findIndex((r, i) => r.rowCount !== changes[i].rows)
+      if (i >= 0) {
+        const r = response.results[i]
+        const found = r.rowCount ?? `more than ${changes[i].rows}`
+        error = {
+          message:
+            `${r.command} found ${found} ${r.rowCount === 1 ? 'row' : 'rows'} instead of ${changes[i].rows}, so nothing was saved. ` +
+            'A row may have been changed or deleted since the query ran.'
+        }
+      }
+    }
+    const finish = error
+      ? nested
+        ? 'ROLLBACK TO SAVEPOINT slate_changes; RELEASE SAVEPOINT slate_changes'
+        : 'ROLLBACK'
+      : nested
+        ? 'RELEASE SAVEPOINT slate_changes'
+        : 'COMMIT'
+    const end = await this.run(tabId, target, finish, 0)
+    return {
+      ...response,
+      // A deferred constraint can still fail at COMMIT.
+      error: error ?? end.error,
+      notices: [...response.notices, ...end.notices],
+      txStatus: end.txStatus,
+      durationMs: begin.durationMs + response.durationMs + end.durationMs
     }
   }
 

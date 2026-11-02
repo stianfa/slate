@@ -12,6 +12,7 @@ import type {
   Target,
   TestResult
 } from './types'
+import type { ChangeStatement } from './changes'
 import type { VariableValues } from './variables'
 
 /** Everything the renderer can ask the main process to do. Channel names equal method names. */
@@ -31,6 +32,8 @@ export interface Api {
     variables: VariableValues,
     options: RunOptions
   ): Promise<RunResponse>
+  /** Saves changes made in the grid on the tab's session, all or nothing. */
+  applyChanges(tabId: string, target: Target, changes: ChangeStatement[]): Promise<RunResponse>
   cancelQuery(tabId: string): Promise<void>
   closeSession(tabId: string): Promise<void>
   getSettings(): Promise<Settings>
@@ -68,6 +71,7 @@ export const API_METHODS: (keyof Api)[] = [
   'disconnect',
   'getSchema',
   'runQuery',
+  'applyChanges',
   'cancelQuery',
   'closeSession',
   'getSettings',

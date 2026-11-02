@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import pg from 'pg'
 import { DbManager, explainConnectError } from '../src/main/db'
 import { describeSchema } from '../src/main/schemaText'
-import { insertSql, insertTarget } from '../src/shared/insert'
+import { changeStatements, editTarget, insertSql } from '../src/shared/changes'
 import type { ConnectionConfig } from '../src/shared/types'
 
 const port = Number(process.env.SLATE_DEV_PG_PORT ?? 55432)
@@ -84,7 +84,7 @@ describe.skipIf(!up)('DbManager against the sample database', () => {
   it('inserts new rows into the table behind a result, inside the open transaction', async () => {
     const schema = await db.schema(target)
     let r = await db.run('t-insert', target, 'begin; select id, email as mail, upper(email) as loud, org_id, settings from users limit 1', 100)
-    const into = insertTarget(r.results[1].fields, schema)
+    const into = editTarget(r.results[1].fields, schema)
     expect(into?.table.name).toBe('users')
     expect(into?.columns.map((c) => c?.name ?? null)).toEqual(['id', 'email', null, 'org_id', 'settings'])
     const sql = insertSql(into!, [
@@ -102,6 +102,64 @@ describe.skipIf(!up)('DbManager against the sample database', () => {
     expect(Number(rows[0][0])).toBeGreaterThan(2000)
     r = await db.run('t-insert', target, 'rollback', 100)
     expect(r.txStatus).toBe('idle')
+  })
+
+  it('saves edits, deletions and new rows together, and undoes them all on a failure', async () => {
+    const schema = await db.schema(target)
+    const run = (sql: string) => db.run('t-changes', target, sql, 100)
+    await run("delete from products where sku like 'SKU-DBT-%'")
+    await run("insert into products (sku, title, price) values ('SKU-DBT-1', 'one', 1), ('SKU-DBT-2', 'two', 2)")
+    let r = await run("select id, sku, title, price, price * 2 as double from products where sku like 'SKU-DBT-%' order by id")
+    const result = r.results[0]
+    const into = editTarget(result.fields, schema)!
+    expect(into.key).toEqual([0])
+
+    // Price 2 -> 5 on the first row, delete the second, add a third; the computed field stays NULL.
+    const planned = changeStatements(into, result.rows, {
+      added: [[undefined, 'SKU-DBT-3', 'three', '3', undefined]],
+      edited: { 0: { 3: '5' } },
+      deleted: [1]
+    })
+    r = await db.applyChanges('t-changes', target, planned)
+    expect(r.error).toBeNull()
+    expect(r.txStatus).toBe('idle')
+    expect(r.results.map((x) => x.command)).toEqual(['DELETE', 'UPDATE', 'INSERT'])
+    expect(r.results[1].rows[0].slice(1, 4)).toEqual(['SKU-DBT-1', 'one', '5.00'])
+    r = await run("select sku, price from products where sku like 'SKU-DBT-%' order by sku")
+    expect(r.results[0].rows).toEqual([
+      ['SKU-DBT-1', '5.00'],
+      ['SKU-DBT-3', '3.00']
+    ])
+
+    // A row that is gone makes its UPDATE find nothing: nothing is saved, not even the insert.
+    const stale = changeStatements(into, [['0', 'SKU-DBT-0', 'zero', '0', '0']], {
+      added: [[undefined, 'SKU-DBT-4', 'four', '4', undefined]],
+      edited: { 0: { 2: 'renamed' } },
+      deleted: []
+    })
+    r = await db.applyChanges('t-changes', target, stale)
+    expect(r.error?.message).toMatch(/^UPDATE found 0 rows instead of 1, so nothing was saved/)
+    expect(r.txStatus).toBe('idle')
+    r = await run("select count(*) from products where sku = 'SKU-DBT-4'")
+    expect(r.results[0].rows).toEqual([['0']])
+
+    // Inside an open transaction a failure goes back to a savepoint, so earlier work survives.
+    await run("begin; update products set title = 'kept' where sku = 'SKU-DBT-1'")
+    const failing = changeStatements(into, [], { added: [[undefined, 'SKU-DBT-3', 'dupe', '1', undefined]], edited: {}, deleted: [] })
+    r = await db.applyChanges('t-changes', target, failing)
+    expect(r.error?.message).toMatch(/duplicate key value/)
+    expect(r.error?.position).toBeUndefined()
+    expect(r.txStatus).toBe('transaction')
+    r = await run("select title from products where sku = 'SKU-DBT-1'")
+    expect(r.results[0].rows).toEqual([['kept']])
+    await run('rollback')
+
+    // A failed transaction is refused.
+    await run('begin; select 1/0')
+    r = await db.applyChanges('t-changes', target, failing)
+    expect(r.error?.message).toMatch(/has failed/)
+    await run('rollback')
+    await run("delete from products where sku like 'SKU-DBT-%'")
   })
 
   it('reports errors with an absolute position and keeps earlier results', async () => {

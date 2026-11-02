@@ -10,10 +10,12 @@ import {
   type PointerEvent,
   type Ref
 } from 'react'
-import type { Draft } from '@shared/insert'
+import { ArrowDown, ArrowUp, Filter } from 'lucide-react'
+import { NO_CHANGES, editedValue, withEdit, withReverted, type Draft, type GridChanges } from '@shared/changes'
 import type { Cell, ColumnInfo, ResultField, StatementResult } from '@shared/types'
 import { api } from '../api'
 import { displayValue, parseTsv, toTsvRow } from '../lib/format'
+import type { RowSort } from '../lib/rows'
 
 const ROW_HEIGHT = 26
 const HEADER_HEIGHT = 44
@@ -26,20 +28,30 @@ const COL_OVERSCAN = 4
 /** The focused cell and the corner the selection started from. A null column selects whole rows. */
 type Selection = { row: number; col: number | null; anchorRow: number; anchorCol: number | null } | null
 
-/** Rows added under a result whose columns come from one table, waiting to be inserted. */
-export interface NewRowsEditor {
-  /** The table column behind each field; null for computed fields, which new rows leave empty. */
+/** Changes to the table a result's columns come from: added rows, edited cells and deleted rows. */
+export interface GridEditor {
+  /** The table column behind each field; null for computed fields, which can't be edited. */
   columns: (ColumnInfo | null)[]
-  rows: Draft[][]
-  change(rows: Draft[][]): void
+  /** Why the result's own rows can't be edited or deleted (new rows still can be); null when they can. */
+  readOnly: string | null
+  changes: GridChanges
+  change(changes: GridChanges): void
   submit(): void
-  /** An insert is running. */
+  /** A save or a query is running. */
   busy: boolean
 }
 
 export interface DataGridHandle {
   /** Adds an empty row at the bottom and selects its first cell. */
   addRow(): void
+  focus(): void
+}
+
+/** A value to show in full; `set` is there when the cell can be edited. */
+export interface OpenValue {
+  value: Draft
+  field: ResultField
+  set?(value: Cell): void
 }
 
 // What the grid last put on the clipboard, with NULLs, tabs and line breaks intact. Pasting that
@@ -89,26 +101,48 @@ function rowHeadWidth(result: StatementResult, transposed: boolean, rowCount: nu
   return Math.round(Math.min(280, Math.max(96, widest + 34)))
 }
 
+const isMultiline = (v: Draft) => typeof v === 'string' && /[\r\n]/.test(v)
+
 function cellText(value: string): string {
   const flat = value.length > MAX_CELL_CHARS ? value.slice(0, MAX_CELL_CHARS) + '…' : value
   return flat.replace(/\s*\r?\n\s*/g, ' ↵ ')
 }
 
 /**
- * Shows a result's rows, or with `transposed` its columns as rows and each row as a column. With
- * `newRows`, rows typed or pasted under the result are shown and edited below it.
+ * Shows a result's rows, or with `transposed` its columns as rows and each row as a column. `order`
+ * picks and orders the result's rows to show (sorted or filtered). With `editor`, cells of a table's
+ * rows can be edited, rows deleted, and new rows typed or pasted under the result.
  */
 export function DataGrid({
   result,
   transposed = false,
+  order = null,
+  sort = null,
+  onSort,
+  onColumnMenu,
+  filtered,
+  onFind,
   onOpenValue,
-  newRows,
+  onReadOnly,
+  editor,
   ref
 }: {
   result: StatementResult
   transposed?: boolean
-  onOpenValue(value: string, field: ResultField): void
-  newRows?: NewRowsEditor
+  /** Indexes of the result's rows to show, in order; null shows them all as returned. */
+  order?: number[] | null
+  sort?: RowSort | null
+  onSort?(column: number): void
+  /** Right-click on a column header (or a click on its filter mark), at a point in the window. */
+  onColumnMenu?(column: number, x: number, y: number): void
+  /** Columns with a value filter, marked in their header. */
+  filtered?: number[]
+  /** Cmd+F in the grid, to filter its rows. */
+  onFind?(): void
+  onOpenValue(value: OpenValue): void
+  /** Someone tried to change a row that can't be changed; the message says why. */
+  onReadOnly?(message: string): void
+  editor?: GridEditor
   ref?: Ref<DataGridHandle>
 }) {
   const scroller = useRef<HTMLDivElement>(null)
@@ -124,7 +158,7 @@ export function DataGrid({
   // A row to scroll to once it has been drawn, e.g. one just added.
   const reveal = useRef<number | null>(null)
 
-  // Keyed on the fields: rows added to the result by an insert keep widths, selection and scroll.
+  // Keyed on the fields: rows added to the result by a save keep widths, selection and scroll.
   useEffect(() => {
     setWidths(initialWidths(result, transposed))
     setSelection(null)
@@ -132,6 +166,9 @@ export function DataGrid({
     setEditing(null)
     scroller.current?.scrollTo({ top: 0, left: 0 })
   }, [result.fields, transposed])
+
+  // Sorting or filtering moves rows out from under the selection.
+  useEffect(() => setSelection(null), [order])
 
   useLayoutEffect(() => {
     const el = scroller.current
@@ -144,17 +181,27 @@ export function DataGrid({
     return () => observer.disconnect()
   }, [])
 
-  // In grid terms: rows and columns as shown, which are swapped when transposed.
-  // New rows come after the result's own rows.
-  const drafts = !transposed && newRows ? newRows.rows : []
-  const base = result.rows.length
-  const rowCount = transposed ? result.fields.length : base + drafts.length
-  const colCount = transposed ? result.rows.length : result.fields.length
+  // In grid terms: rows and columns as shown, which are swapped when transposed. `shown` maps the
+  // result's rows on screen to their index in the result; new rows come after them.
+  const shown = useMemo(() => order ?? result.rows.map((_, i) => i), [order, result.rows])
+  const changes = editor?.changes ?? NO_CHANGES
+  const added = !transposed && editor ? changes.added : []
+  const deleted = useMemo(() => new Set(changes.deleted), [changes.deleted])
+  const base = shown.length
+  const rowCount = transposed ? result.fields.length : base + added.length
+  const colCount = transposed ? base : result.fields.length
   const valueAt = (r: number, c: number): Draft =>
-    transposed ? result.rows[c][r] : r < base ? result.rows[r][c] : drafts[r - base][c]
+    transposed
+      ? editedValue(changes, result.rows, shown[c], r)
+      : r < base
+        ? editedValue(changes, result.rows, shown[r], c)
+        : added[r - base][c]
   const fieldAt = (r: number, c: number) => result.fields[transposed ? r : c]
   const isNew = (r: number) => !transposed && r >= base
-  const editable = (r: number, c: number) => isNew(r) && Boolean(newRows && !newRows.busy && newRows.columns[c])
+  const canEdit = (r: number, c: number) => {
+    if (!editor || editor.busy || transposed || !editor.columns[c]) return false
+    return isNew(r) || (!editor.readOnly && !deleted.has(shown[r]))
+  }
 
   // New rows can go away under the selection, when they are discarded.
   useEffect(() => {
@@ -165,17 +212,19 @@ export function DataGrid({
     }
   }, [rowCount])
 
+  // Transposed, a column is a row of the result, and keeps that row's width when rows are filtered.
+  const colWidths = useMemo(() => (transposed ? shown.map((i) => widths[i] ?? 72) : widths), [transposed, shown, widths])
   const headWidth = useMemo(() => rowHeadWidth(result, transposed, rowCount), [result, transposed, rowCount])
-  const offsets = useMemo(() => widths.reduce((out, w) => (out.push(out[out.length - 1] + w), out), [0]), [widths])
+  const offsets = useMemo(() => colWidths.reduce((out, w) => (out.push(out[out.length - 1] + w), out), [0]), [colWidths])
   const totalWidth = headWidth + offsets[offsets.length - 1]
   const first = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN)
   const last = Math.min(rowCount, Math.ceil((scrollTop + viewport) / ROW_HEIGHT) + OVERSCAN)
-  const template = useMemo(() => `${headWidth}px ${widths.map((w) => `${w}px`).join(' ')}`, [widths, headWidth])
+  const template = useMemo(() => `${headWidth}px ${colWidths.map((w) => `${w}px`).join(' ')}`, [colWidths, headWidth])
 
   // The column under horizontal position x, measured from the first data column.
   const columnAt = (x: number) => {
     let lo = 0
-    let hi = widths.length - 1
+    let hi = colWidths.length - 1
     while (lo < hi) {
       const mid = (lo + hi) >> 1
       if (offsets[mid + 1] <= x) lo = mid + 1
@@ -192,11 +241,12 @@ export function DataGrid({
   const startResize = (col: number, e: PointerEvent) => {
     e.preventDefault()
     e.stopPropagation()
+    const key = transposed ? shown[col] : col
     const startX = e.clientX
-    const start = widths[col]
+    const start = colWidths[col]
     const move = (ev: globalThis.PointerEvent) => {
       const next = Math.max(48, start + ev.clientX - startX)
-      setWidths((w) => w.map((v, i) => (i === col ? next : v)))
+      setWidths((w) => w.map((v, i) => (i === key ? next : v)))
     }
     const up = () => {
       window.removeEventListener('pointermove', move)
@@ -230,6 +280,7 @@ export function DataGrid({
     left: selection.col === null || selection.anchorCol === null ? 0 : Math.min(selection.col, selection.anchorCol),
     right: selection.col === null || selection.anchorCol === null ? colCount - 1 : Math.max(selection.col, selection.anchorCol)
   }
+  const range = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => from + i)
 
   const select = (row: number, col: number | null, e: MouseEvent) => {
     if (editingRef.current?.row === row && editingRef.current.col === col) return
@@ -241,7 +292,7 @@ export function DataGrid({
 
   const copy = () => {
     if (!bounds) return
-    const cols = Array.from({ length: bounds.right - bounds.left + 1 }, (_, i) => bounds.left + i)
+    const cols = range(bounds.left, bounds.right)
     const cells: Cell[][] = []
     const lines: string[] = []
     for (let r = bounds.top; r <= bounds.bottom; r++) {
@@ -256,22 +307,43 @@ export function DataGrid({
     void api.copyText(text)
   }
 
-  const changeDrafts = (edit: (rows: Draft[][]) => void) => {
-    if (!newRows) return
-    const next = drafts.map((row) => [...row])
-    edit(next)
-    newRows.change(next)
+  /**
+   * Sets cells that can be edited: a new row's value (undefined is DEFAULT), or an edit of one of the
+   * result's rows. Returns whether a cell was left alone because the result's rows are read-only.
+   */
+  const setCells = (cells: { r: number; c: number; value: Draft }[]) => {
+    if (!editor) return false
+    let next = changes
+    let rows: Draft[][] | null = null
+    let refused = false
+    for (const { r, c, value } of cells) {
+      if (!canEdit(r, c)) {
+        refused ||= !isNew(r) && Boolean(editor.readOnly && editor.columns[c])
+        continue
+      }
+      if (isNew(r)) (rows ??= added.map((row) => [...row]))[r - base][c] = value
+      else if (value !== undefined) next = withEdit(next, result.rows, shown[r], c, value)
+    }
+    if (rows || next !== changes) editor.change(rows ? { ...next, added: rows } : next)
+    return refused
+  }
+
+  const changeAdded = (edit: (rows: Draft[][]) => void) => {
+    if (!editor) return
+    const rows = added.map((row) => [...row])
+    edit(rows)
+    editor.change({ ...changes, added: rows })
   }
 
   /** Fills new rows from `start` (an index into the new rows) and column `col`, adding rows as needed. */
   const pasteCells = (cells: Cell[][], start: number, col: number) => {
-    if (!newRows || !cells.length) return
-    changeDrafts((rows) =>
+    if (!editor || !cells.length) return
+    changeAdded((rows) =>
       cells.forEach((values, i) => {
         const row = (rows[start + i] ??= result.fields.map(() => undefined))
         // Computed fields keep their place, so copied rows line up with the result's columns.
         values.forEach((v, j) => {
-          if (newRows.columns[col + j]) row[col + j] = v
+          if (editor.columns[col + j]) row[col + j] = v
         })
       })
     )
@@ -285,27 +357,70 @@ export function DataGrid({
     reveal.current = base + start
   }
 
-  /** Pastes into the selected new rows, or as new rows at the bottom when the selection is elsewhere. */
+  /** Overwrites cells of the result's rows: one copied value fills the selection, more fill from its corner. */
+  const pasteOver = (cells: Cell[][], b: NonNullable<typeof bounds>) => {
+    const fill = cells.length === 1 && cells[0].length === 1
+    const targets: { r: number; c: number; value: Draft }[] = []
+    if (fill) {
+      for (const r of range(b.top, b.bottom)) for (const c of range(b.left, b.right)) targets.push({ r, c, value: cells[0][0] })
+    } else {
+      cells.forEach((values, i) =>
+        values.forEach((value, j) => {
+          const r = b.top + i
+          const c = b.left + j
+          if (r < rowCount && c < colCount) targets.push({ r, c, value })
+        })
+      )
+    }
+    if (setCells(targets) && editor?.readOnly) onReadOnly?.(editor.readOnly)
+    if (!fill && cells.length) {
+      const bottom = Math.min(rowCount - 1, b.top + cells.length - 1)
+      const right = Math.min(colCount - 1, b.left + Math.max(...cells.map((r) => r.length)) - 1)
+      setSelection({ anchorRow: b.top, anchorCol: b.left, row: bottom, col: right })
+    }
+  }
+
+  /**
+   * Pastes into the selected new rows, over the selected cells of the result's rows, or as new rows at
+   * the bottom when whole rows of the result (or nothing) are selected.
+   */
   const paste = async () => {
     const text = await api.readClipboard()
     const cells = lastCopy?.text === text ? lastCopy.cells : parseTsv(text)
     if (bounds && isNew(bounds.top)) pasteCells(cells, bounds.top - base, bounds.wholeRows ? 0 : bounds.left)
-    else pasteCells(cells, drafts.length, 0)
+    else if (bounds && !bounds.wholeRows) pasteOver(cells, bounds)
+    else pasteCells(cells, added.length, 0)
   }
 
   const addRow = () => {
-    if (!newRows || transposed || newRows.busy) return
-    const row = base + drafts.length
-    newRows.change([...drafts, result.fields.map(() => undefined)])
+    if (!editor || transposed || editor.busy) return
+    const row = base + added.length
+    editor.change({ ...changes, added: [...added, result.fields.map(() => undefined)] })
     setSelection({ row, col: 0, anchorRow: row, anchorCol: 0 })
     reveal.current = row
     scroller.current?.focus()
   }
 
-  useImperativeHandle(ref, () => ({ addRow }))
+  useImperativeHandle(ref, () => ({ addRow, focus: () => scroller.current?.focus() }))
 
-  const startEdit = (row: number, col: number, text: string, dirty: boolean) => {
-    editingRef.current = { row, col, text, dirty }
+  /** Shows a value in full, in an editor when the cell can be edited. */
+  const openValue = (r: number, c: number) => {
+    const value = valueAt(r, c)
+    const field = fieldAt(r, c)
+    if (canEdit(r, c)) onOpenValue({ value, field, set: (v) => void setCells([{ r, c, value: v }]) })
+    else if (value !== null && value !== undefined) onOpenValue({ value, field })
+  }
+
+  /**
+   * Edits a cell in place. JSON and values with line breaks open in the value editor instead, which
+   * shows JSON laid out and keeps line breaks.
+   */
+  const startEdit = (row: number, col: number, typed?: string) => {
+    const value = valueAt(row, col)
+    const type = fieldAt(row, col).type
+    if (typed === undefined && (isMultiline(value) || type === 'json' || type === 'jsonb')) return openValue(row, col)
+    const text = typed ?? (value === null || value === undefined ? '' : displayValue(value, fieldAt(row, col)))
+    editingRef.current = { row, col, text, dirty: typed !== undefined }
     setEditing(editingRef.current)
     setSelection({ row, col, anchorRow: row, anchorCol: col })
   }
@@ -315,7 +430,16 @@ export function DataGrid({
     if (!current) return
     editingRef.current = null
     setEditing(null)
-    if (save && current.dirty) changeDrafts((rows) => (rows[current.row - base][current.col] = current.text))
+    if (save && current.dirty) {
+      const { row, col, text } = current
+      if (isNew(row)) changeAdded((rows) => (rows[row - base][col] = text))
+      else if (editor) {
+        // Text that reads as the loaded value (true for t) leaves it as it was.
+        const original = result.rows[shown[row]][col]
+        const value = original !== null && text === displayValue(original, fieldAt(row, col)) ? original : text
+        editor.change(withEdit(changes, result.rows, shown[row], col, value))
+      }
+    }
     if (refocus) scroller.current?.focus()
   }
 
@@ -334,7 +458,7 @@ export function DataGrid({
       // Before the app-wide Cmd+Enter, which would run the query instead.
       e.preventDefault()
       finishEdit(true)
-      newRows?.submit()
+      editor?.submit()
     } else if (e.key === 'Enter') {
       e.preventDefault()
       finishEdit(true)
@@ -351,15 +475,21 @@ export function DataGrid({
     if (e.target !== e.currentTarget || editingRef.current) return
     const mod = e.ctrlKey || e.metaKey
     const key = e.key.toLowerCase()
-    if (mod && key === 'enter' && drafts.length && newRows && !newRows.busy) {
-      // Insert the new rows rather than run the query, which would drop them.
+    const pending = changes.added.length + Object.keys(changes.edited).length + changes.deleted.length
+    if (mod && key === 'enter' && pending && editor && !editor.busy) {
+      // Save the changes rather than run the query, which would drop them.
       e.preventDefault()
-      newRows.submit()
+      editor.submit()
       return
     }
-    if (mod && key === 'v' && newRows && !transposed) {
+    if (mod && key === 'f' && !e.shiftKey && onFind) {
       e.preventDefault()
-      if (!newRows.busy) void paste()
+      onFind()
+      return
+    }
+    if (mod && key === 'v' && editor && !transposed) {
+      e.preventDefault()
+      if (!editor.busy) void paste()
       return
     }
     if (mod && key === 'a') {
@@ -378,24 +508,35 @@ export function DataGrid({
       scrollIntoView(next.row)
       e.preventDefault()
     }
-    const onlyNewRows = isNew(bounds.top) && newRows && !newRows.busy
+    const selectedRows = range(bounds.top, bounds.bottom)
+    const resultRows = selectedRows.filter((r) => !isNew(r)).map((r) => shown[r])
     if (mod && key === 'c') {
       copy()
       e.preventDefault()
-    } else if ((e.key === 'Delete' || e.key === 'Backspace') && onlyNewRows) {
+    } else if (mod && key === 'z' && !e.shiftKey && editor && !editor.busy && !transposed) {
+      // Undo the edits and deletions of the selected rows, or of the selected cells.
+      e.preventDefault()
+      editor.change(withReverted(changes, resultRows, bounds.wholeRows ? undefined : range(bounds.left, bounds.right)))
+    } else if ((e.key === 'Delete' || e.key === 'Backspace') && editor && !editor.busy && !transposed) {
       // Cmd+Backspace would otherwise delete the whole query from the history.
       e.preventDefault()
       if (bounds.wholeRows || mod) {
-        changeDrafts((rows) => rows.splice(bounds.top - base, bounds.bottom - bounds.top + 1))
-        const next = Math.max(0, bounds.top - 1)
-        setSelection(rowCount > bounds.bottom - bounds.top + 1 ? { row: next, col, anchorRow: next, anchorCol: col } : null)
-      } else {
-        // Back to the column's default.
-        changeDrafts((rows) => {
-          for (let r = bounds.top; r <= bounds.bottom; r++) {
-            for (let c = bounds.left; c <= bounds.right; c++) rows[r - base][c] = undefined
-          }
+        // New rows go away; the result's own rows are marked, and deleted when the changes are saved.
+        if (resultRows.length && editor.readOnly) onReadOnly?.(editor.readOnly)
+        const drop = new Set(selectedRows.filter(isNew).map((r) => r - base))
+        editor.change({
+          ...changes,
+          added: added.filter((_, i) => !drop.has(i)),
+          deleted: editor.readOnly ? changes.deleted : [...new Set([...changes.deleted, ...resultRows])]
         })
+        if (drop.size) {
+          const next = Math.max(0, bounds.top - 1)
+          setSelection(rowCount > drop.size ? { row: next, col, anchorRow: next, anchorCol: col } : null)
+        }
+      } else {
+        // A new row's cells go back to their DEFAULT, the result's cells to NULL.
+        const cells = selectedRows.flatMap((r) => range(bounds.left, bounds.right).map((c) => ({ r, c, value: isNew(r) ? undefined : null })))
+        if (setCells(cells) && editor.readOnly) onReadOnly?.(editor.readOnly)
       }
     } else if (e.key === 'ArrowDown') move(row + 1, col)
     else if (e.key === 'ArrowUp') move(row - 1, col)
@@ -403,35 +544,41 @@ export function DataGrid({
     else if (e.key === 'ArrowLeft') move(row, col === null ? null : col - 1)
     else if (e.key === 'PageDown') move(row + Math.floor(viewport / ROW_HEIGHT) - 1, col)
     else if (e.key === 'PageUp') move(row - Math.floor(viewport / ROW_HEIGHT) + 1, col)
-    else if ((e.key === 'Enter' || e.key === 'F2') && col !== null && editable(row, col)) {
+    else if (e.key === 'Enter' && e.shiftKey && col !== null) {
       e.preventDefault()
-      startEdit(row, col, valueAt(row, col) ?? '', false)
+      openValue(row, col)
+    } else if ((e.key === 'Enter' || e.key === 'F2') && col !== null && canEdit(row, col)) {
+      e.preventDefault()
+      startEdit(row, col)
     } else if (e.key === 'Enter' && col !== null) {
-      const v = valueAt(row, col)
-      if (v !== null && v !== undefined) onOpenValue(v, fieldAt(row, col))
-    } else if (e.key.length === 1 && !mod && col !== null && editable(row, col)) {
-      // Typing into a new cell replaces its value, as in a spreadsheet.
-      e.preventDefault()
-      startEdit(row, col, e.key, true)
+      openValue(row, col)
+    } else if (e.key.length === 1 && !mod && col !== null) {
+      // Typing into a cell replaces its value, as in a spreadsheet.
+      if (canEdit(row, col)) {
+        e.preventDefault()
+        startEdit(row, col, e.key)
+      } else if (editor?.readOnly && !isNew(row) && editor.columns[col]) onReadOnly?.(editor.readOnly)
     } else if (e.key === 'Escape') setSelection(null)
   }
 
-  const rows = []
+  const rowEls = []
   for (let r = first; r < last; r++) {
     const inRows = bounds !== null && r >= bounds.top && r <= bounds.bottom
     const fresh = isNew(r)
+    const gone = !fresh && !transposed && deleted.has(shown[r])
+    const edits = !fresh && !transposed ? changes.edited[shown[r]] : undefined
     const rowField = result.fields[r]
-    rows.push(
+    rowEls.push(
       <div
         key={r}
-        className={`grid-row${inRows && bounds.wholeRows ? ' row-selected' : ''}${fresh ? ' new' : ''}${r % 2 ? ' odd' : ''}`}
+        className={`grid-row${inRows && bounds.wholeRows ? ' row-selected' : ''}${fresh ? ' new' : ''}${gone ? ' deleted' : ''}${r % 2 ? ' odd' : ''}`}
         style={{ top: HEADER_HEIGHT + r * ROW_HEIGHT, gridTemplateColumns: template, width: totalWidth }}
       >
         <div
           className={`grid-rownum${transposed ? ' grid-rowhead' : ''}`}
           style={{ gridColumn: 1 }}
           onMouseDown={(e) => select(r, null, e)}
-          title={transposed ? `${rowField.name} · ${rowField.type}` : undefined}
+          title={transposed ? `${rowField.name} · ${rowField.type}` : gone ? 'Deleted when you save the changes' : undefined}
         >
           {transposed ? (
             <>
@@ -447,18 +594,16 @@ export function DataGrid({
           const field = fieldAt(r, c)
           const focused = selection?.row === r && selection.col === c
           const inRange = inRows && !bounds.wholeRows && c >= bounds.left && c <= bounds.right
-          const computed = fresh && !newRows?.columns[c]
+          const computed = fresh && !editor?.columns[c]
+          const changed = Boolean(edits && c in edits)
           const edited = editing?.row === r && editing.col === c
           return (
             <div
               key={c}
-              className={`grid-cell${field.numeric ? ' num' : ''}${focused ? ' selected' : inRange ? ' in-range' : ''}${computed ? ' computed' : ''}${edited ? ' editing' : ''}`}
+              className={`grid-cell${field.numeric ? ' num' : ''}${focused ? ' selected' : inRange ? ' in-range' : ''}${computed ? ' computed' : ''}${changed ? ' changed' : ''}${edited ? ' editing' : ''}`}
               style={windowed ? { gridColumn: c + 2 } : undefined}
               onMouseDown={(e) => select(r, c, e)}
-              onDoubleClick={() => {
-                if (editable(r, c)) startEdit(r, c, value ?? '', false)
-                else if (value !== null && value !== undefined) onOpenValue(value, field)
-              }}
+              onDoubleClick={() => (canEdit(r, c) ? startEdit(r, c) : openValue(r, c))}
             >
               {edited ? (
                 <input
@@ -477,7 +622,9 @@ export function DataGrid({
                     if (!/[\t\n]/.test(text)) return
                     e.preventDefault()
                     finishEdit(false)
-                    pasteCells(lastCopy?.text === text ? lastCopy.cells : parseTsv(text), r - base, c)
+                    const cells = lastCopy?.text === text ? lastCopy.cells : parseTsv(text)
+                    if (fresh) pasteCells(cells, r - base, c)
+                    else pasteOver(cells, { top: r, bottom: r, left: c, right: c, wholeRows: false })
                   }}
                 />
               ) : computed ? null : value === undefined ? (
@@ -496,6 +643,8 @@ export function DataGrid({
     )
   }
 
+  const sortTitle = result.truncated ? `Sort the ${result.rows.length.toLocaleString('en-US')} loaded rows` : 'Sort'
+
   return (
     <div
       className="grid"
@@ -512,23 +661,49 @@ export function DataGrid({
           <div className="grid-rownum grid-corner" style={{ gridColumn: 1 }} />
           {columns.map((c) => {
             const f = transposed ? null : result.fields[c]
+            const sorted = f && sort?.column === c ? sort : null
+            const picked = Boolean(f && filtered?.includes(c))
             return (
               <div
                 key={c}
-                className={`grid-head${f?.numeric ? ' num' : ''}`}
+                className={`grid-head${f?.numeric ? ' num' : ''}${f && onSort ? ' sortable' : ''}${sorted ? ' sorted' : ''}${picked ? ' filtered' : ''}`}
                 style={windowed ? { gridColumn: c + 2 } : undefined}
-                title={f ? `${f.name} · ${f.type}` : undefined}
+                title={f ? `${f.name} · ${f.type}${onSort ? `\n${sortTitle}` : ''}${onColumnMenu ? '\nRight-click to filter' : ''}` : undefined}
+                onClick={() => f && onSort?.(c)}
+                onContextMenu={(e) => {
+                  if (!f || !onColumnMenu) return
+                  e.preventDefault()
+                  onColumnMenu(c, e.clientX, e.clientY)
+                }}
               >
-                <span className="grid-head-name">{f ? f.name : `Row ${c + 1}`}</span>
+                <span className="grid-head-title">
+                  <span className="grid-head-name">{f ? f.name : `Row ${c + 1}`}</span>
+                  {sorted && (sorted.desc ? <ArrowDown size={11} aria-label="descending" /> : <ArrowUp size={11} aria-label="ascending" />)}
+                  {picked && (
+                    <span
+                      className="grid-head-filter"
+                      aria-label="filtered"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        const box = e.currentTarget.getBoundingClientRect()
+                        onColumnMenu?.(c, box.left, box.bottom + 4)
+                      }}
+                    >
+                      <Filter size={10} />
+                    </span>
+                  )}
+                </span>
                 <span className="grid-head-type">{f?.type}</span>
-                <span className="grid-resize" onPointerDown={(e) => startResize(c, e)} />
+                <span className="grid-resize" onPointerDown={(e) => startResize(c, e)} onClick={(e) => e.stopPropagation()} />
               </div>
             )
           })}
         </div>
-        {rows}
+        {rowEls}
       </div>
-      {result.fields.length > 0 && rowCount === 0 && <div className="grid-empty">No rows</div>}
+      {result.fields.length > 0 && rowCount === 0 && (
+        <div className="grid-empty">{result.rows.length ? 'No rows match the filter' : 'No rows'}</div>
+      )}
     </div>
   )
 }

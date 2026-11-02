@@ -238,8 +238,8 @@ try {
     if (sku !== 'SKU-0001') throw new Error(`pasted ${sku} as the first sku`)
 
     // The copied ids are taken, so the insert fails and the rows stay.
-    await page.getByRole('button', { name: 'Insert 2 rows' }).click()
-    await page.locator('.insert-error', { hasText: 'duplicate key value' }).waitFor()
+    await page.getByRole('button', { name: 'Save 2 changes' }).click()
+    await page.locator('.changes-error', { hasText: 'duplicate key value' }).waitFor()
     await shot('07c-new-rows')
 
     // Delete puts the ids back to DEFAULT; typing or double-clicking edits a cell.
@@ -262,6 +262,144 @@ try {
     const id = await page.locator('.grid-row').nth(4).locator('.grid-cell').first().textContent()
     if (!(Number(id) > 120)) throw new Error(`inserted row got id ${id}`)
     await run("delete from products where sku like 'SKU-E2E-%';", 'DELETE 2')
+  })
+
+  await step('edit cells and delete rows in place, on a sorted result', async () => {
+    const run = async (sql, summary) => {
+      await setEditor(sql)
+      await page.keyboard.press(`${mod}+Enter`)
+      await page.locator('.results-summary', { hasText: summary }).waitFor()
+    }
+    await run("delete from products where sku like 'SKU-E2E-%';", 'DELETE')
+    await run("insert into products (sku, title, price) values ('SKU-E2E-A', 'alpha', 1), ('SKU-E2E-B', 'beta', 2), ('SKU-E2E-C', 'gamma', 3);", 'INSERT 3')
+    await run("select id, sku, title, price from products where sku like 'SKU-E2E-%' order by sku;", '3 rows')
+
+    // Sort by sku descending, so the rows show as C, B, A and edits have to find the right row.
+    const sku = page.locator('.grid-head', { hasText: 'sku' })
+    await sku.click()
+    await sku.click()
+    await page.locator('.grid-head.sorted', { hasText: 'sku' }).locator('[aria-label="descending"]').waitFor()
+    const rows = page.locator('.grid-row')
+    const cell = (r, c) => rows.nth(r).locator('.grid-cell').nth(c)
+    if ((await cell(0, 1).textContent()) !== 'SKU-E2E-C') throw new Error('rows were not sorted by sku')
+
+    await cell(2, 2).click()
+    await page.keyboard.type('ALPHA')
+    await page.keyboard.press('Enter')
+    await rows.nth(2).locator('.grid-cell.changed', { hasText: 'ALPHA' }).waitFor()
+    await cell(1, 3).dblclick()
+    await page.locator('.grid-input').fill('22.5')
+    await page.keyboard.press('Enter')
+    // Delete on a cell of the result sets it to NULL; title can't be NULL, so the save fails.
+    await cell(1, 2).click()
+    await page.keyboard.press('Delete')
+    await rows.nth(1).locator('.grid-cell.changed .null').waitFor()
+    await rows.nth(0).locator('.grid-rownum').click()
+    await page.keyboard.press('Delete')
+    await page.locator('.grid-row.deleted').waitFor()
+    await page.getByRole('button', { name: 'Save 3 changes' }).waitFor()
+    await shot('07d-edited-rows')
+    await page.keyboard.press(`${mod}+Enter`)
+    await page.locator('.changes-error', { hasText: 'null value in column "title"' }).waitFor()
+    if ((await rows.count()) !== 3) throw new Error('a failed save should change nothing')
+
+    // Cmd+Z puts the cell back; then the save goes through and the result follows.
+    await cell(1, 2).click()
+    await page.keyboard.press(`${mod}+Z`)
+    await rows.nth(1).locator('.grid-cell', { hasText: 'beta' }).waitFor()
+    await page.keyboard.press(`${mod}+Enter`)
+    await page.locator('.toast', { hasText: 'Updated 2 rows and deleted 1 in products' }).waitFor()
+    await page.locator('.results-summary', { hasText: '2 rows' }).waitFor()
+    if (await page.locator('.grid-cell.changed, .grid-row.deleted').count()) throw new Error('changes were left after the save')
+    if ((await cell(0, 3).textContent()) !== '22.50') throw new Error('the updated row should show what Postgres returned')
+
+    // Shift+Enter edits a value in a dialog, which keeps line breaks; Discard drops the edit.
+    await cell(0, 2).click()
+    await page.keyboard.press('Shift+Enter')
+    await page.locator('.value-edit').fill('two\nlines')
+    await page.getByRole('button', { name: 'Apply' }).click()
+    await rows.nth(0).locator('.grid-cell.changed', { hasText: 'two ↵ lines' }).waitFor()
+    await page.getByRole('button', { name: 'Discard' }).click()
+    await rows.nth(0).locator('.grid-cell', { hasText: 'beta' }).waitFor()
+
+    await run("select sku, title, price from products where sku like 'SKU-E2E-%' order by sku;", '2 rows')
+    const saved = await rows.evaluateAll((els) => els.map((el) => [...el.querySelectorAll('.grid-cell')].map((c) => c.textContent)))
+    if (JSON.stringify(saved) !== JSON.stringify([['SKU-E2E-A', 'ALPHA', '1.00'], ['SKU-E2E-B', 'beta', '22.50']])) {
+      throw new Error(`saved rows were ${JSON.stringify(saved)}`)
+    }
+
+    // Without the primary key in the result, rows can't be edited, and typing says why.
+    await run("select sku, title from products where sku like 'SKU-E2E-%' order by sku;", '2 rows')
+    await cell(0, 1).click()
+    await page.keyboard.type('x')
+    await page.locator('.toast', { hasText: 'Add id to the query' }).waitFor()
+    await run("delete from products where sku like 'SKU-E2E-%';", 'DELETE 2')
+  })
+
+  await step('sort and filter the loaded rows', async () => {
+    await setEditor('select id, sku, price from products order by id limit 50;')
+    await page.keyboard.press(`${mod}+Enter`)
+    await page.locator('.results-summary', { hasText: '50 rows' }).waitFor()
+    const price = page.locator('.grid-head', { hasText: 'price' })
+    const prices = async () =>
+      (await page.locator('.grid-row').evaluateAll((els) => els.slice(0, 5).map((el) => Number(el.querySelectorAll('.grid-cell')[2].textContent))))
+    await price.click()
+    let seen = await prices()
+    if (seen.some((p, i) => i && p < seen[i - 1])) throw new Error(`prices not ascending: ${seen}`)
+    await price.click()
+    seen = await prices()
+    if (seen.some((p, i) => i && p > seen[i - 1])) throw new Error(`prices not descending: ${seen}`)
+    await price.click()
+    if (await page.locator('.grid-head.sorted').count()) throw new Error('a third click should stop sorting')
+
+    // Cmd+F in the grid goes to the filter; Escape there clears it.
+    await page.locator('.grid-row').first().locator('.grid-cell').first().click()
+    await page.keyboard.press(`${mod}+F`)
+    await page.keyboard.type('sku-001')
+    await page.locator('.results-summary .pill', { hasText: '10 matches' }).waitFor()
+    if ((await page.locator('.grid-row').count()) !== 10) throw new Error('the filter should leave 10 rows')
+    await shot('07e-filtered')
+    await page.keyboard.press('Escape')
+    await page.locator('.grid-row').nth(20).waitFor()
+    if (await page.locator('.results-summary .pill').count()) throw new Error('the filter was not cleared')
+  })
+
+  await step('pick values to show or hide from a column header', async () => {
+    await setEditor('select id, status, total from orders order by id limit 200;')
+    await page.keyboard.press(`${mod}+Enter`)
+    await page.locator('.results-summary', { hasText: '200 rows' }).waitFor()
+    const menu = page.getByRole('menu', { name: 'status column' })
+    const statuses = () =>
+      page.locator('.grid-row').evaluateAll((els) => [...new Set(els.map((el) => el.querySelectorAll('.grid-cell')[1].textContent))].sort())
+
+    // The four statuses each have 50 of the 200 orders.
+    await page.locator('.grid-head', { hasText: 'status' }).click({ button: 'right' })
+    await menu.waitFor()
+    if ((await menu.locator('.column-menu-values .column-menu-value').count()) !== 4) throw new Error('expected the four statuses')
+    await menu.locator('.column-menu-value', { hasText: 'paid' }).locator('input').check()
+    await menu.locator('.column-menu-value', { hasText: 'shipped' }).locator('input').check()
+    await page.locator('.results-summary .pill', { hasText: '100 matches' }).waitFor()
+    if (JSON.stringify(await statuses()) !== '["paid","shipped"]') throw new Error(`showing ${await statuses()}`)
+    await shot('07f-column-filter')
+    await menu.getByRole('button', { name: 'Hide ticked' }).click()
+    await page.locator('.results-summary .pill', { hasText: '100 matches' }).waitFor()
+    if (JSON.stringify(await statuses()) !== '["cancelled","pending"]') throw new Error(`hiding left ${await statuses()}`)
+    await page.keyboard.press('Escape')
+    await menu.waitFor({ state: 'detached' })
+    await page.locator('.grid-head.filtered', { hasText: 'status' }).waitFor()
+
+    // Sorting from the menu; a column with 50 or more values gets no list.
+    await page.locator('.grid-head', { hasText: 'total' }).click({ button: 'right' })
+    await page.getByRole('menu', { name: 'total column' }).getByText('50 or more different values').waitFor()
+    await page.getByRole('menu', { name: 'total column' }).getByRole('button', { name: 'Sort descending' }).click()
+    await page.locator('.grid-head.sorted', { hasText: 'total' }).waitFor()
+
+    // The filter mark opens the menu again, to clear the filter.
+    await page.locator('.grid-head.filtered .grid-head-filter').click()
+    await menu.getByRole('button', { name: 'Clear filter' }).click()
+    await page.locator('.grid-head.filtered').waitFor({ state: 'detached' })
+    if (await page.locator('.results-summary .pill').count()) throw new Error('the filter was not cleared')
+    await page.keyboard.press('Escape')
   })
 
   await step('load more rows and save the full result', async () => {

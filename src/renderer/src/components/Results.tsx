@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, ArrowRightLeft, Check, ChevronDown, Copy, Download, Info, Plus, Square, Unlock } from 'lucide-react'
-import { insertTarget } from '@shared/insert'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { AlertCircle, ArrowRightLeft, Check, ChevronDown, Copy, Download, Info, Plus, Search, Square, Unlock, X } from 'lucide-react'
+import { countChanges, editTarget, readOnlyReason } from '@shared/changes'
 import { isReadOnly, qualifiedName } from '@shared/sql'
-import { targetKey, type ResultField } from '@shared/types'
+import { targetKey } from '@shared/types'
 import { api, modKey } from '../api'
 import { formatDuration, lineCol, prettyValue, summarize, toCsv, toJson, toMarkdown } from '../lib/format'
+import { nextSort, rowOrder } from '../lib/rows'
 import { useStore, type Tab } from '../store'
-import { DataGrid, type DataGridHandle } from './DataGrid'
+import { ColumnMenu } from './ColumnMenu'
+import { DataGrid, type DataGridHandle, type OpenValue } from './DataGrid'
 import { useEnvironment } from './environment'
 
 // SQLSTATE for a write attempted in a read-only transaction.
@@ -69,13 +71,16 @@ export function Results({ tab }: { tab: Tab }) {
   const retryWithWrites = useStore((s) => s.retryWithWrites)
   const loadMore = useStore((s) => s.loadMore)
   const exportResult = useStore((s) => s.exportResult)
-  const setNewRows = useStore((s) => s.setNewRows)
-  const insertNewRows = useStore((s) => s.insertNewRows)
+  const setChanges = useStore((s) => s.setChanges)
+  const saveChanges = useStore((s) => s.saveChanges)
+  const setView = useStore((s) => s.setView)
+  const showToast = useStore((s) => s.showToast)
   const schema = useStore((s) => (tab.target ? s.schemas[targetKey(tab.target)]?.data : undefined))
   const grid = useRef<DataGridHandle>(null)
+  const filterInput = useRef<HTMLInputElement>(null)
   const [saving, setSaving] = useState(false)
   const environment = useEnvironment(tab.target)
-  const [viewing, setViewing] = useState<{ value: string; field: ResultField } | null>(null)
+  const [viewing, setViewing] = useState<OpenValue | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
   const response = tab.response
   // activeResult === results.length selects the error, which gets its own tab.
@@ -83,11 +88,25 @@ export function Results({ tab }: { tab: Tab }) {
   const result = showingError ? undefined : response?.results[tab.activeResult ?? 0]
   const tabCount = (response?.results.length ?? 0) + (response?.error ? 1 : 0)
   const index = tab.activeResult ?? 0
-  // New rows can go into the table a result's columns come from.
-  const into = useMemo(() => (result ? insertTarget(result.fields, schema) : null), [result?.fields, schema])
-  const insertable = Boolean(into && !tab.transposed)
-  const newRows = result && tab.newRows?.result === index ? tab.newRows : undefined
-  const newCount = newRows?.rows.length ?? 0
+  // The table a result's columns come from, whose rows the grid can change.
+  const into = useMemo(() => (result ? editTarget(result.fields, schema) : null), [result?.fields, schema])
+  const editable = Boolean(into && !tab.transposed)
+  const pending = result && tab.changes?.result === index ? tab.changes : undefined
+  const changeCount = pending ? countChanges(pending) : 0
+  const view = result && tab.view?.result === index ? tab.view : undefined
+  const order = useMemo(
+    () => (result ? rowOrder(result, view?.sort, view?.filter, view?.columns) : null),
+    [result, view?.sort, view?.filter, view?.columns]
+  )
+  const filteredColumns = useMemo(
+    () => Object.entries(view?.columns ?? {}).flatMap(([c, f]) => (f.values.length ? [Number(c)] : [])),
+    [view?.columns]
+  )
+  const [columnMenu, setColumnMenu] = useState<{ column: number; x: number; y: number } | null>(null)
+  const closeColumnMenu = useCallback(() => setColumnMenu(null), [])
+  // A new result can have other columns.
+  useEffect(() => setColumnMenu(null), [result?.fields])
+  const tableName = into ? qualifiedName(into.table.schema, into.table.name) : 'the table'
 
   const copy = async (format: 'csv' | 'json' | 'markdown') => {
     if (!result) return
@@ -182,15 +201,23 @@ export function Results({ tab }: { tab: Tab }) {
         ref={grid}
         result={result}
         transposed={Boolean(tab.transposed)}
-        onOpenValue={(value, field) => setViewing({ value, field })}
-        newRows={
-          into && insertable
+        order={order}
+        sort={view?.sort}
+        onSort={tab.transposed ? undefined : (column) => setView(tab.id, index, { sort: nextSort(view?.sort, column) })}
+        onColumnMenu={tab.transposed ? undefined : (column, x, y) => setColumnMenu({ column, x, y })}
+        filtered={filteredColumns}
+        onFind={() => filterInput.current?.focus()}
+        onOpenValue={setViewing}
+        onReadOnly={(message) => showToast(message)}
+        editor={
+          into && editable
             ? {
                 columns: into.columns,
-                rows: newRows?.rows ?? [],
+                readOnly: readOnlyReason(into),
+                changes: pending ?? { added: [], edited: {}, deleted: [] },
                 busy: Boolean(tab.running),
-                change: (rows) => setNewRows(tab.id, index, rows),
-                submit: () => void insertNewRows(tab.id)
+                change: (changes) => setChanges(tab.id, index, changes),
+                submit: () => void saveChanges(tab.id)
               }
             : undefined
         }
@@ -253,11 +280,17 @@ export function Results({ tab }: { tab: Tab }) {
                   row limit
                 </span>
               )}
+              {(view?.filter || filteredColumns.length > 0) && order && (
+                <span className="pill" title="Rows that pass the filters">
+                  {order.length.toLocaleString('en-US')} {order.length === 1 ? 'match' : 'matches'}
+                </span>
+              )}
               {result.truncated && isReadOnly(result.statement) && (
                 <button
                   className="ghost-btn"
                   onClick={() => void loadMore(tab.id, tab.activeResult ?? 0)}
-                  title="Run the statement again with room for more rows"
+                  disabled={changeCount > 0}
+                  title={changeCount > 0 ? 'Save or discard your changes first' : 'Run the statement again with room for more rows'}
                 >
                   Load {(settings?.rowLimit ?? 1000).toLocaleString('en-US')} more
                 </button>
@@ -275,26 +308,57 @@ export function Results({ tab }: { tab: Tab }) {
             <>
               {saving && <Spinner />}
               {copied && <span className="copied">{copied}</span>}
-              {newCount > 0 && (
+              {changeCount > 0 && (
                 <>
-                  <button className="ghost-btn" onClick={() => setNewRows(tab.id, index, [])} title="Drop the new rows">
+                  <button
+                    className="ghost-btn"
+                    onClick={() => setChanges(tab.id, index, { added: [], edited: {}, deleted: [] })}
+                    title="Drop the changes"
+                  >
                     Discard
                   </button>
                   <button
                     className="btn primary"
-                    onClick={() => void insertNewRows(tab.id)}
-                    title={`Insert into ${into ? qualifiedName(into.table.schema, into.table.name) : 'the table'} (${modKey}+Enter in the grid)`}
+                    onClick={() => void saveChanges(tab.id)}
+                    title={`Save to ${tableName} (${modKey}+Enter in the grid)`}
                   >
-                    Insert {newCount} {newCount === 1 ? 'row' : 'rows'}
+                    Save {changeCount} {changeCount === 1 ? 'change' : 'changes'}
                   </button>
                 </>
               )}
-              {into && insertable && (
+              <div className={`grid-filter${view?.filter ? ' active' : ''}`}>
+                <Search size={12} />
+                <input
+                  ref={filterInput}
+                  value={view?.filter ?? ''}
+                  placeholder="Filter rows"
+                  aria-label="Filter rows"
+                  spellCheck={false}
+                  title={
+                    result.truncated
+                      ? `Show the loaded rows with a value that contains this text (${modKey}+F in the grid)`
+                      : `Show the rows with a value that contains this text (${modKey}+F in the grid)`
+                  }
+                  onChange={(e) => setView(tab.id, index, { filter: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape' && view?.filter) setView(tab.id, index, { filter: '' })
+                    else if (e.key === 'Escape' || e.key === 'Enter' || e.key === 'ArrowDown') grid.current?.focus()
+                    else return
+                    e.preventDefault()
+                  }}
+                />
+                {view?.filter && (
+                  <button className="grid-filter-clear" onClick={() => setView(tab.id, index, { filter: '' })} aria-label="Clear filter">
+                    <X size={11} />
+                  </button>
+                )}
+              </div>
+              {into && editable && (
                 <button
                   className="ghost-btn"
                   onClick={() => grid.current?.addRow()}
                   aria-label="Add row"
-                  title={`Add a row to ${qualifiedName(into.table.schema, into.table.name)}. Paste copied rows into it with ${modKey}+V.`}
+                  title={`Add a row to ${tableName}. Paste copied rows into it with ${modKey}+V.`}
                 >
                   <Plus size={14} />
                 </button>
@@ -303,10 +367,10 @@ export function Results({ tab }: { tab: Tab }) {
                 className={`ghost-btn${tab.transposed ? ' active' : ''}`}
                 onClick={() => updateTab(tab.id, { transposed: !tab.transposed })}
                 aria-pressed={Boolean(tab.transposed)}
-                disabled={newCount > 0}
+                disabled={changeCount > 0}
                 title={
-                  newCount > 0
-                    ? 'Insert or discard the new rows first'
+                  changeCount > 0
+                    ? 'Save or discard the changes first'
                     : tab.transposed
                       ? 'Show rows as rows again'
                       : 'Show each row as a column, with the column names down the side'
@@ -320,34 +384,120 @@ export function Results({ tab }: { tab: Tab }) {
         </div>
       </div>
       {tab.running && <div className="progress" />}
-      {newRows?.error && (
-        <div className="insert-error">
+      {pending?.error && (
+        <div className="changes-error">
           <AlertCircle size={13} />
           <span>
-            {newRows.error.message}
-            {newRows.error.detail && <span className="insert-error-detail"> {newRows.error.detail}</span>}
+            {pending.error.message}
+            {pending.error.detail && <span className="changes-error-detail"> {pending.error.detail}</span>}
           </span>
         </div>
       )}
       <div className="results-body">{body}</div>
+      {columnMenu && result && result.fields[columnMenu.column] && (
+        <ColumnMenu
+          result={result}
+          column={columnMenu.column}
+          x={columnMenu.x}
+          y={columnMenu.y}
+          sort={view?.sort}
+          filter={view?.columns?.[columnMenu.column]}
+          onSort={(sort) => setView(tab.id, index, { sort })}
+          onFilter={(filter) => {
+            const columns = { ...view?.columns }
+            if (filter) columns[columnMenu.column] = filter
+            else delete columns[columnMenu.column]
+            setView(tab.id, index, { columns })
+          }}
+          onClose={closeColumnMenu}
+        />
+      )}
       {viewing && (
-        <Dialog
-          title={`${viewing.field.name}`}
-          onClose={() => setViewing(null)}
-          width={680}
-          footer={
-            <>
-              <span className="muted mono small">{viewing.field.type}</span>
-              <button className="btn" onClick={() => void api.copyText(prettyValue(viewing.value, viewing.field))}>
-                <Copy size={13} /> Copy
-              </button>
-            </>
-          }
-        >
-          <pre className="value-view">{prettyValue(viewing.value, viewing.field)}</pre>
-        </Dialog>
+        <ValueDialog
+          open={viewing}
+          onClose={() => {
+            setViewing(null)
+            grid.current?.focus()
+          }}
+        />
       )}
     </div>
+  )
+}
+
+/** A value in full, or an editor for it when its cell can be edited. */
+function ValueDialog({ open, onClose }: { open: OpenValue; onClose(): void }) {
+  const { value, field, set } = open
+  // jsonb is stored normalized, so editing it pretty-printed changes nothing but the layout.
+  const start = value === null || value === undefined ? '' : field.type === 'jsonb' ? prettyValue(value, field) : value
+  const [text, setText] = useState(start)
+  const [dirty, setDirty] = useState(false)
+  if (!set) {
+    const shown = prettyValue(value ?? '', field)
+    return (
+      <Dialog
+        title={field.name}
+        onClose={onClose}
+        width={680}
+        footer={
+          <>
+            <span className="muted mono small">{field.type}</span>
+            <button className="btn" onClick={() => void api.copyText(shown)}>
+              <Copy size={13} /> Copy
+            </button>
+          </>
+        }
+      >
+        <pre className="value-view">{shown}</pre>
+      </Dialog>
+    )
+  }
+  const apply = () => {
+    if (dirty) set(text)
+    onClose()
+  }
+  return (
+    <Dialog
+      title={field.name}
+      onClose={onClose}
+      width={680}
+      footer={
+        <>
+          <span className="muted mono small">{field.type}</span>
+          <button
+            className="btn"
+            onClick={() => {
+              set(null)
+              onClose()
+            }}
+          >
+            Set NULL
+          </button>
+          <button className="btn primary" onClick={apply} title={`${modKey}+Enter`}>
+            Apply
+          </button>
+        </>
+      }
+    >
+      <textarea
+        className="value-edit"
+        value={text}
+        placeholder={value === null ? 'NULL' : value === undefined ? 'DEFAULT' : undefined}
+        autoFocus
+        spellCheck={false}
+        onChange={(e) => {
+          setText(e.target.value)
+          setDirty(true)
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            // Before the app-wide Cmd+Enter, which would run the query.
+            e.preventDefault()
+            apply()
+          }
+        }}
+      />
+    </Dialog>
   )
 }
 

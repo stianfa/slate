@@ -137,6 +137,7 @@ function registerIpc() {
     getSchema: (target, refresh) => manager.schema(target, refresh),
     runQuery: (tabId, target, sql, rowLimit, variables, options) =>
       manager.run(tabId, target, sql, rowLimit, variables, options),
+    applyChanges: (tabId, target, changes) => manager.applyChanges(tabId, target, changes),
     cancelQuery: (tabId) => manager.cancel(tabId),
     closeSession: (tabId) => manager.closeSession(tabId),
     getSettings: async () => store.getSettings(),

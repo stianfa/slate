@@ -1,5 +1,5 @@
 import { useEffect, useRef, type PointerEvent } from 'react'
-import { AlignLeft, Check, ChevronDown, Database, Lock, MessageSquare, Network, Play, PlaySquare, Sparkles } from 'lucide-react'
+import { AlignLeft, Check, ChevronDown, Database, Lock, MessageSquare, Network, Play, Sparkles } from 'lucide-react'
 import { environmentOf, targetKey } from '@shared/types'
 import { modKey } from '../api'
 import { useStore, type Tab } from '../store'
@@ -198,14 +198,6 @@ export function QueryPane({ tab }: { tab: Tab }) {
           title={`Run the statement under the cursor or the selection (${modKey}+Enter)`}
         >
           <Play size={13} fill="currentColor" /> Run
-        </button>
-        <button
-          className="icon-btn"
-          onClick={() => editorBridge.run('all')}
-          disabled={tab.running || !tab.target}
-          title={`Run everything (${modKey}+Shift+Enter)`}
-        >
-          <PlaySquare size={15} />
         </button>
         <button className="icon-btn" onClick={() => editorBridge.format()} title="Format SQL (Shift+Alt+F)">
           <AlignLeft size={15} />
