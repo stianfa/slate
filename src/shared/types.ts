@@ -88,6 +88,8 @@ export interface ForeignKeyRef {
 
 export interface ColumnInfo {
   name: string
+  /** Attribute number (pg_attribute.attnum); result fields point at columns by it. */
+  num: number
   type: string
   nullable: boolean
   default: string | null
@@ -98,6 +100,7 @@ export interface ColumnInfo {
 export type RelationKind = 'table' | 'partitioned table' | 'view' | 'materialized view' | 'foreign table'
 
 export interface TableInfo {
+  oid: number
   schema: string
   name: string
   kind: RelationKind
@@ -120,6 +123,9 @@ export interface ResultField {
   name: string
   type: string
   numeric: boolean
+  /** OID and attribute number of the table column behind the field; 0 for computed values. */
+  table: number
+  column: number
 }
 
 export type Cell = string | null

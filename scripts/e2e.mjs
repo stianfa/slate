@@ -197,13 +197,71 @@ try {
     // A long result turns into many columns; only those in view are drawn.
     await setEditor('select * from products order by id limit 100;')
     await page.keyboard.press(`${mod}+Enter`)
-    await page.locator('.grid-head', { hasText: 'Row 1' }).waitFor()
+    await page.locator('.grid-head', { hasText: /^Row 1$/ }).waitFor()
     if ((await page.locator('.grid-head').count()) >= 100) throw new Error('every column was drawn')
     await page.locator('.grid').evaluate((el) => (el.scrollLeft = el.scrollWidth))
     await page.locator('.grid-head', { hasText: 'Row 100' }).waitFor()
 
     await page.getByRole('button', { name: 'Transpose' }).click()
     await page.locator('.grid-head', { hasText: 'sku' }).waitFor()
+  })
+
+  await step('add rows with + and paste copied rows into them', async () => {
+    // Keep the system clipboard out of the test; the grid copies and pastes through main.
+    await app.evaluate(({ clipboard }) => {
+      let text = ''
+      clipboard.writeText = (t) => (text = t)
+      clipboard.readText = () => text
+    })
+    const run = async (sql, summary) => {
+      await setEditor(sql)
+      await page.keyboard.press(`${mod}+Enter`)
+      await page.locator('.results-summary', { hasText: summary }).waitFor()
+    }
+    await run("delete from products where sku like 'SKU-E2E-%';", 'DELETE')
+
+    // Copy two whole rows: click a row number, shift-click another.
+    await run('select * from products where id <= 2 order by id;', '2 rows')
+    await page.locator('.grid-row .grid-rownum').nth(0).click()
+    await page.locator('.grid-row .grid-rownum').nth(1).click({ modifiers: ['Shift'] })
+    await page.keyboard.press(`${mod}+C`)
+
+    // + adds one row; pasting two rows into it adds the second.
+    await run('select * from products order by id limit 3;', '3 rows')
+    await page.getByRole('button', { name: 'Add row' }).click()
+    const fresh = page.locator('.grid-row.new')
+    await fresh.first().locator('.grid-cell', { hasText: 'DEFAULT' }).first().waitFor()
+    await page.keyboard.press(`${mod}+V`)
+    await fresh.nth(1).waitFor()
+    if ((await fresh.count()) !== 2) throw new Error('expected two new rows')
+    const sku = await fresh.first().locator('.grid-cell').nth(1).textContent()
+    if (sku !== 'SKU-0001') throw new Error(`pasted ${sku} as the first sku`)
+
+    // The copied ids are taken, so the insert fails and the rows stay.
+    await page.getByRole('button', { name: 'Insert 2 rows' }).click()
+    await page.locator('.insert-error', { hasText: 'duplicate key value' }).waitFor()
+    await shot('07c-new-rows')
+
+    // Delete puts the ids back to DEFAULT; typing or double-clicking edits a cell.
+    await fresh.nth(0).locator('.grid-cell').nth(0).click()
+    await fresh.nth(1).locator('.grid-cell').nth(0).click({ modifiers: ['Shift'] })
+    await page.keyboard.press('Delete')
+    await fresh.nth(1).locator('.grid-cell').first().filter({ hasText: 'DEFAULT' }).waitFor()
+    await fresh.nth(0).locator('.grid-cell').nth(1).click()
+    await page.keyboard.type('SKU-E2E-1')
+    await page.keyboard.press('Enter')
+    await fresh.nth(1).locator('.grid-cell').nth(1).dblclick()
+    await page.locator('.grid-input').fill('SKU-E2E-2')
+    await page.keyboard.press('Enter')
+    await fresh.nth(0).locator('.grid-cell', { hasText: 'SKU-E2E-1' }).waitFor()
+
+    // Cmd+Enter in the grid inserts instead of running the query; the rows join the result.
+    await page.keyboard.press(`${mod}+Enter`)
+    await page.locator('.results-summary', { hasText: '5 rows' }).waitFor()
+    if (await fresh.count()) throw new Error('new rows were left after the insert')
+    const id = await page.locator('.grid-row').nth(4).locator('.grid-cell').first().textContent()
+    if (!(Number(id) > 120)) throw new Error(`inserted row got id ${id}`)
+    await run("delete from products where sku like 'SKU-E2E-%';", 'DELETE 2')
   })
 
   await step('load more rows and save the full result', async () => {

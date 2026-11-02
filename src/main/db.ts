@@ -201,17 +201,19 @@ export class DbManager {
     const pool = this.pool(target)
     const [relations, constraints, enums] = await Promise.all([
       pool.query<{
+        oid: number
         schema: string
         name: string
         kind: string
         estimate: number
+        num: number | null
         column: string | null
         type: string | null
         notnull: boolean | null
         default: string | null
       }>(
-        `SELECT n.nspname AS schema, c.relname AS name, c.relkind AS kind, c.reltuples::float8 AS estimate,
-                a.attname AS column, format_type(a.atttypid, a.atttypmod) AS type, a.attnotnull AS notnull,
+        `SELECT c.oid, n.nspname AS schema, c.relname AS name, c.relkind AS kind, c.reltuples::float8 AS estimate,
+                a.attnum AS num, a.attname AS column, format_type(a.atttypid, a.atttypmod) AS type, a.attnotnull AS notnull,
                 pg_get_expr(d.adbin, d.adrelid) AS default
          FROM pg_class c
          JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -261,6 +263,7 @@ export class DbManager {
       let table = tables.get(id)
       if (!table) {
         table = {
+          oid: r.oid,
           schema: r.schema,
           name: r.name,
           kind: RELATION_KINDS[r.kind] ?? 'table',
@@ -272,6 +275,7 @@ export class DbManager {
       if (r.column) {
         table.columns.push({
           name: r.column,
+          num: r.num ?? 0,
           type: r.type ?? '',
           nullable: !r.notnull,
           default: r.default,
@@ -448,7 +452,10 @@ export class DbManager {
     const fields = (result?.fields ?? []).map((f) => ({
       name: f.name,
       type: typeNames.get(f.dataTypeID) ?? String(f.dataTypeID),
-      numeric: NUMERIC_TYPES.has(f.dataTypeID)
+      numeric: NUMERIC_TYPES.has(f.dataTypeID),
+      // pg reads the OID as a signed int32; the schema has it unsigned.
+      table: f.tableID >>> 0,
+      column: f.columnID
     }))
     return {
       statement: statement.text,

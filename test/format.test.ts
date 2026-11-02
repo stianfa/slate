@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { formatSql } from '../src/renderer/src/editor/format'
+import { parseTsv, toTsvRow } from '../src/renderer/src/lib/format'
 
 describe('formatSql', () => {
   it('upper-cases keywords and breaks clauses onto lines', () => {
@@ -14,5 +15,25 @@ describe('formatSql', () => {
     expect(out).toContain('$1')
     expect(out).toContain('name = :name')
     expect(out).toContain("$$ begin raise notice 'x;y'; end $$")
+  })
+})
+
+describe('parseTsv', () => {
+  it('reads rows copied from the grid, empty values as NULL', () => {
+    const fields = ['id', 'name', 'note'].map((name) => ({ name, type: 'text', numeric: false, table: 0, column: 0 }))
+    const text = [toTsvRow(['1', 'Ann', null], fields), toTsvRow(['2', 'Bo', 'x'], fields)].join('\n')
+    expect(parseTsv(text)).toEqual([
+      ['1', 'Ann', null],
+      ['2', 'Bo', 'x']
+    ])
+  })
+
+  it('takes one value, Windows line ends and a trailing line break', () => {
+    expect(parseTsv('hello')).toEqual([['hello']])
+    expect(parseTsv('a\tb\r\nc\td\r\n')).toEqual([
+      ['a', 'b'],
+      ['c', 'd']
+    ])
+    expect(parseTsv('')).toEqual([])
   })
 })

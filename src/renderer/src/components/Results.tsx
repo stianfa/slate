@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react'
-import { AlertCircle, ArrowRightLeft, Check, ChevronDown, Copy, Download, Info, Square, Unlock } from 'lucide-react'
-import { isReadOnly } from '@shared/sql'
-import type { ResultField } from '@shared/types'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { AlertCircle, ArrowRightLeft, Check, ChevronDown, Copy, Download, Info, Plus, Square, Unlock } from 'lucide-react'
+import { insertTarget } from '@shared/insert'
+import { isReadOnly, qualifiedName } from '@shared/sql'
+import { targetKey, type ResultField } from '@shared/types'
 import { api, modKey } from '../api'
 import { formatDuration, lineCol, prettyValue, summarize, toCsv, toJson, toMarkdown } from '../lib/format'
 import { useStore, type Tab } from '../store'
-import { DataGrid } from './DataGrid'
+import { DataGrid, type DataGridHandle } from './DataGrid'
 import { useEnvironment } from './environment'
 
 // SQLSTATE for a write attempted in a read-only transaction.
@@ -68,6 +69,10 @@ export function Results({ tab }: { tab: Tab }) {
   const retryWithWrites = useStore((s) => s.retryWithWrites)
   const loadMore = useStore((s) => s.loadMore)
   const exportResult = useStore((s) => s.exportResult)
+  const setNewRows = useStore((s) => s.setNewRows)
+  const insertNewRows = useStore((s) => s.insertNewRows)
+  const schema = useStore((s) => (tab.target ? s.schemas[targetKey(tab.target)]?.data : undefined))
+  const grid = useRef<DataGridHandle>(null)
   const [saving, setSaving] = useState(false)
   const environment = useEnvironment(tab.target)
   const [viewing, setViewing] = useState<{ value: string; field: ResultField } | null>(null)
@@ -77,6 +82,12 @@ export function Results({ tab }: { tab: Tab }) {
   const showingError = Boolean(response?.error) && (tab.activeResult ?? 0) >= (response?.results.length ?? 0)
   const result = showingError ? undefined : response?.results[tab.activeResult ?? 0]
   const tabCount = (response?.results.length ?? 0) + (response?.error ? 1 : 0)
+  const index = tab.activeResult ?? 0
+  // New rows can go into the table a result's columns come from.
+  const into = useMemo(() => (result ? insertTarget(result.fields, schema) : null), [result?.fields, schema])
+  const insertable = Boolean(into && !tab.transposed)
+  const newRows = result && tab.newRows?.result === index ? tab.newRows : undefined
+  const newCount = newRows?.rows.length ?? 0
 
   const copy = async (format: 'csv' | 'json' | 'markdown') => {
     if (!result) return
@@ -168,9 +179,21 @@ export function Results({ tab }: { tab: Tab }) {
   } else if (result && result.fields.length > 0) {
     body = (
       <DataGrid
+        ref={grid}
         result={result}
         transposed={Boolean(tab.transposed)}
         onOpenValue={(value, field) => setViewing({ value, field })}
+        newRows={
+          into && insertable
+            ? {
+                columns: into.columns,
+                rows: newRows?.rows ?? [],
+                busy: Boolean(tab.running),
+                change: (rows) => setNewRows(tab.id, index, rows),
+                submit: () => void insertNewRows(tab.id)
+              }
+            : undefined
+        }
       />
     )
   } else if (result) {
@@ -252,11 +275,42 @@ export function Results({ tab }: { tab: Tab }) {
             <>
               {saving && <Spinner />}
               {copied && <span className="copied">{copied}</span>}
+              {newCount > 0 && (
+                <>
+                  <button className="ghost-btn" onClick={() => setNewRows(tab.id, index, [])} title="Drop the new rows">
+                    Discard
+                  </button>
+                  <button
+                    className="btn primary"
+                    onClick={() => void insertNewRows(tab.id)}
+                    title={`Insert into ${into ? qualifiedName(into.table.schema, into.table.name) : 'the table'} (${modKey}+Enter in the grid)`}
+                  >
+                    Insert {newCount} {newCount === 1 ? 'row' : 'rows'}
+                  </button>
+                </>
+              )}
+              {into && insertable && (
+                <button
+                  className="ghost-btn"
+                  onClick={() => grid.current?.addRow()}
+                  aria-label="Add row"
+                  title={`Add a row to ${qualifiedName(into.table.schema, into.table.name)}. Paste copied rows into it with ${modKey}+V.`}
+                >
+                  <Plus size={14} />
+                </button>
+              )}
               <button
                 className={`ghost-btn${tab.transposed ? ' active' : ''}`}
                 onClick={() => updateTab(tab.id, { transposed: !tab.transposed })}
                 aria-pressed={Boolean(tab.transposed)}
-                title={tab.transposed ? 'Show rows as rows again' : 'Show each row as a column, with the column names down the side'}
+                disabled={newCount > 0}
+                title={
+                  newCount > 0
+                    ? 'Insert or discard the new rows first'
+                    : tab.transposed
+                      ? 'Show rows as rows again'
+                      : 'Show each row as a column, with the column names down the side'
+                }
               >
                 <ArrowRightLeft size={13} /> Transpose
               </button>
@@ -266,6 +320,15 @@ export function Results({ tab }: { tab: Tab }) {
         </div>
       </div>
       {tab.running && <div className="progress" />}
+      {newRows?.error && (
+        <div className="insert-error">
+          <AlertCircle size={13} />
+          <span>
+            {newRows.error.message}
+            {newRows.error.detail && <span className="insert-error-detail"> {newRows.error.detail}</span>}
+          </span>
+        </div>
+      )}
       <div className="results-body">{body}</div>
       {viewing && (
         <Dialog

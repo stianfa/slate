@@ -182,6 +182,7 @@ function registerIpc() {
     },
     cancelChat: async (requestId) => ai.cancel(requestId),
     copyText: async (text) => clipboard.writeText(text),
+    readClipboard: async () => clipboard.readText(),
     saveFile: async (defaultName, content) => {
       const path = await askSavePath(defaultName)
       if (!path) return null

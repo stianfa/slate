@@ -95,6 +95,15 @@ export function toTsvRow(row: Cell[], fields: ResultField[]): string {
   return row.map((v, i) => (v === null ? '' : displayValue(v, fields[i]).replace(/[\t\n]/g, ' '))).join('\t')
 }
 
+/** Rows of tab-separated text, as copied from a grid or a spreadsheet. Empty values read as NULL. */
+export function parseTsv(text: string): Cell[][] {
+  if (!text) return []
+  return text
+    .replace(/\r?\n$/, '')
+    .split(/\r?\n/)
+    .map((line) => line.split('\t').map((v) => (v === '' ? null : v)))
+}
+
 export function prettyValue(value: string, field: ResultField): string {
   if (isJson(field)) {
     try {

@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { insertSql, insertTarget, type Draft } from '@shared/insert'
 import { isReadOnly, leadingKeyword, qualifiedName, splitStatements } from '@shared/sql'
 import {
   bindVariables,
@@ -17,6 +18,7 @@ import {
   type Environment,
   type ConnectionConfig,
   type ConnectionInput,
+  type QueryError,
   type RunResponse,
   type SchemaInfo,
   type ServerInfo,
@@ -76,6 +78,16 @@ export interface Tab {
   activeResult?: number
   /** Results shown with columns as rows, one column per row. */
   transposed?: boolean
+  /** Rows added under a result with +, waiting to be inserted into its table. */
+  newRows?: NewRows
+}
+
+export interface NewRows {
+  /** Index of the result they belong to. */
+  result: number
+  rows: Draft[][]
+  /** Why the last insert failed. */
+  error?: QueryError
 }
 
 export interface PendingRun {
@@ -182,6 +194,10 @@ interface State extends Workspace {
   exportResult(tabId: string, index: number): Promise<string | null>
   /** After Postgres blocked a write on a read-only production session, ask to run it again with writes allowed. */
   retryWithWrites(tabId: string): void
+  /** Replaces the new rows under a result; an empty list drops them. */
+  setNewRows(tabId: string, result: number, rows: Draft[][]): void
+  /** Inserts the new rows on the query's session (inside its open transaction, if any) and adds them to the result. */
+  insertNewRows(tabId: string): Promise<void>
   setDatabaseEnvironment(connectionId: string, database: string, environment: Environment | 'none' | null): Promise<void>
   cancel(tabId: string): Promise<void>
   openTable(target: Target, table: TableInfo): void
@@ -521,7 +537,7 @@ export const useStore = create<State>((set, get) => ({
       return {
         tabs: s.tabs.filter((t) => t.id !== id),
         activeTabId,
-        lastDeleted: { tab: { ...tab, running: false, response: undefined }, at: Date.now() }
+        lastDeleted: { tab: { ...tab, running: false, response: undefined, newRows: undefined }, at: Date.now() }
       }
     })
     // Deleting the last query of a database leaves a blank one to type into.
@@ -562,7 +578,7 @@ export const useStore = create<State>((set, get) => ({
 
   moveTab(id, target) {
     set((s) => ({
-      tabs: s.tabs.map((t) => (t.id === id ? { ...t, target, response: undefined, touchedAt: Date.now() } : t)),
+      tabs: s.tabs.map((t) => (t.id === id ? { ...t, target, response: undefined, newRows: undefined, touchedAt: Date.now() } : t)),
       currentTarget: s.activeTabId === id ? target : s.currentTarget
     }))
   },
@@ -664,6 +680,60 @@ export const useStore = create<State>((set, get) => ({
     })
   },
 
+  setNewRows(tabId, result, rows) {
+    get().updateTab(tabId, { newRows: rows.length ? { result, rows } : undefined })
+  },
+
+  async insertNewRows(tabId) {
+    const tab = get().tabs.find((t) => t.id === tabId)
+    const pending = tab?.newRows
+    const result = pending && tab.response?.results[pending.result]
+    if (!tab?.target || !pending?.rows.length || !result || tab.running) return
+    const target = tab.target
+    const into = insertTarget(result.fields, get().schemas[targetKey(target)]?.data)
+    if (!into) return
+    const table = qualifiedName(into.table.schema, into.table.name)
+    const count = `${pending.rows.length} ${pending.rows.length === 1 ? 'row' : 'rows'}`
+    const environment = environmentOf(get().connections.find((c) => c.id === target.connectionId), target.database)
+    if (environment?.id === 'production') {
+      const ok = await get().confirm({
+        title: `Insert into ${table}?`,
+        message: `This adds ${count} to ${table} on ${target.database}, a production database.`,
+        confirmLabel: `Insert ${count}`
+      })
+      if (!ok) return
+    }
+    get().updateTab(tabId, { running: true, runStartedAt: Date.now(), newRows: { ...pending, error: undefined } })
+    let response: RunResponse
+    try {
+      response = await api.runQuery(tabId, target, insertSql(into, pending.rows), pending.rows.length, {}, { readOnly: false })
+    } catch (e) {
+      const txStatus = tab.response?.txStatus ?? 'idle'
+      response = { results: [], error: { message: (e as Error).message }, notices: [], txStatus, durationMs: 0 }
+    }
+    const current = get().tabs.find((t) => t.id === tabId)?.response
+    if (!current) return get().updateTab(tabId, { running: false })
+    if (response.error) {
+      get().updateTab(tabId, {
+        running: false,
+        newRows: { ...pending, error: response.error },
+        response: { ...current, txStatus: response.txStatus }
+      })
+      return
+    }
+    const inserted = response.results[0]?.rows ?? []
+    const results = [...current.results]
+    const shown = results[pending.result]
+    // Same fields array, so the grid keeps its column widths and scroll position.
+    results[pending.result] = {
+      ...shown,
+      rows: [...shown.rows, ...inserted],
+      rowCount: shown.rowCount === null ? null : shown.rowCount + inserted.length
+    }
+    get().updateTab(tabId, { running: false, newRows: undefined, response: { ...current, results, txStatus: response.txStatus } })
+    get().showToast(`Inserted ${count} into ${table}`)
+  },
+
   async run(tabId, sql, offset, confirmed = false) {
     const tab = get().tabs.find((t) => t.id === tabId)
     if (!tab?.target || tab.running || !sql.trim()) return
@@ -708,7 +778,14 @@ export const useStore = create<State>((set, get) => ({
     }
 
     if (get().conn[target.connectionId]?.status !== 'connected') void get().connect(target.connectionId)
-    get().updateTab(tabId, { running: true, runStartedAt: Date.now(), runOffset: offset, runSql: sql, missingVariables: [] })
+    get().updateTab(tabId, {
+      running: true,
+      runStartedAt: Date.now(),
+      runOffset: offset,
+      runSql: sql,
+      missingVariables: [],
+      newRows: undefined
+    })
     const rowLimit = get().settings?.rowLimit ?? 1000
     let response: RunResponse
     try {

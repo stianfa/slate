@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import pg from 'pg'
 import { DbManager, explainConnectError } from '../src/main/db'
 import { describeSchema } from '../src/main/schemaText'
+import { insertSql, insertTarget } from '../src/shared/insert'
 import type { ConnectionConfig } from '../src/shared/types'
 
 const port = Number(process.env.SLATE_DEV_PG_PORT ?? 55432)
@@ -74,6 +75,33 @@ describe.skipIf(!up)('DbManager against the sample database', () => {
     expect(users.fields.map((f) => f.type)).toEqual(['int8', 'bool', 'jsonb', 'timestamptz'])
     expect(users.fields[0].numeric).toBe(true)
     expect(users.rows[0][1]).toBe('f')
+    // Fields point at their table column, which the schema knows by OID and attribute number.
+    const table = (await db.schema(target)).tables.find((t) => t.name === 'users')!
+    expect(users.fields[2]).toMatchObject({ table: table.oid, column: table.columns.find((c) => c.name === 'settings')!.num })
+    expect(r.results[0].fields[0]).toMatchObject({ table: 0, column: 0 })
+  })
+
+  it('inserts new rows into the table behind a result, inside the open transaction', async () => {
+    const schema = await db.schema(target)
+    let r = await db.run('t-insert', target, 'begin; select id, email as mail, upper(email) as loud, org_id, settings from users limit 1', 100)
+    const into = insertTarget(r.results[1].fields, schema)
+    expect(into?.table.name).toBe('users')
+    expect(into?.columns.map((c) => c?.name ?? null)).toEqual(['id', 'email', null, 'org_id', 'settings'])
+    const sql = insertSql(into!, [
+      [undefined, 'new1@example.com', null, '1', undefined],
+      [undefined, "o'new2@example.com", null, '2', '{"theme": "dark"}']
+    ])
+    r = await db.run('t-insert', target, sql, 2)
+    expect(r.error).toBeNull()
+    expect(r.txStatus).toBe('transaction')
+    const rows = r.results[0].rows
+    expect(rows.map((row) => row.slice(1))).toEqual([
+      ['new1@example.com', null, '1', '{}'],
+      ["o'new2@example.com", null, '2', '{"theme": "dark"}']
+    ])
+    expect(Number(rows[0][0])).toBeGreaterThan(2000)
+    r = await db.run('t-insert', target, 'rollback', 100)
+    expect(r.txStatus).toBe('idle')
   })
 
   it('reports errors with an absolute position and keeps earlier results', async () => {

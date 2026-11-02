@@ -23,6 +23,7 @@
   --accent-soft: rgba(130, 160, 255, 0.15);
   --accent-text: #0b0e14;
   --green: #4ade80;
+  --green-soft: rgba(74, 222, 128, 0.08);
   --amber: #fbbf24;
   --red: #f87171;
   --red-soft: rgba(248, 113, 113, 0.1);
@@ -65,6 +66,7 @@
   --accent-soft: rgba(63, 94, 245, 0.1);
   --accent-text: #ffffff;
   --green: #16a34a;
+  --green-soft: rgba(22, 163, 74, 0.07);
   --amber: #b7791f;
   --red: #dc2626;
   --red-soft: rgba(220, 38, 38, 0.07);
@@ -1454,6 +1456,27 @@ select {
   color: var(--green);
 }
 
+.insert-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 12px;
+  color: var(--red);
+  background: var(--red-soft);
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+  user-select: text;
+}
+
+.insert-error svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.insert-error-detail {
+  color: var(--text-muted);
+}
+
 .progress {
   position: absolute;
   top: 37px;
@@ -1686,6 +1709,15 @@ select {
   background: var(--grid-odd);
 }
 
+/* Rows added with +, not inserted yet. */
+.grid-row.new {
+  background: var(--green-soft);
+}
+
+.grid-row.new .grid-rownum {
+  color: var(--green);
+}
+
 .grid-row:hover {
   background: var(--bg-hover);
 }
@@ -1756,6 +1788,31 @@ select {
   box-shadow: inset 0 0 0 1.5px var(--accent);
   background: var(--accent-soft);
   border-radius: 2px;
+}
+
+.grid-cell.in-range {
+  background: var(--accent-soft);
+}
+
+/* A computed field in a new row: nothing to fill in. */
+.grid-cell.computed {
+  background: var(--bg-hover);
+}
+
+.grid-cell.editing {
+  padding: 0;
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+
+.grid-input {
+  width: 100%;
+  height: 100%;
+  padding: 0 9px;
+  border: none;
+  outline: none;
+  background: var(--bg-input);
+  color: var(--text);
+  font: inherit;
 }
 
 .grid-cell .null {

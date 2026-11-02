@@ -43,6 +43,7 @@ export interface Api {
   /** Stops a chat answer; `chat` then resolves with the text so far. */
   cancelChat(requestId: string): Promise<void>
   copyText(text: string): Promise<void>
+  readClipboard(): Promise<string>
   /** Asks where to save, then writes the text there. Null if the user cancelled. */
   saveFile(defaultName: string, content: string): Promise<string | null>
   /** Asks where to save, then streams every row of a read-only statement to CSV. */
@@ -77,6 +78,7 @@ export const API_METHODS: (keyof Api)[] = [
   'chat',
   'cancelChat',
   'copyText',
+  'readClipboard',
   'saveFile',
   'exportQuery',
   'loadWorkspace',
