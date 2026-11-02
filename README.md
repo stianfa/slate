@@ -49,7 +49,7 @@ On macOS, use `Cmd` instead of `Ctrl`, except for `Ctrl+Tab`: macOS keeps `Cmd+T
 
 ## AI setup
 
-Autocomplete runs on an Azure OpenAI deployment in Azure AI Foundry, the same way monocasi's services call it (`AzureOpenAI` from the `openai` package, Responses API, low reasoning effort). In Settings, enter the resource endpoint, the deployment name and an API key; the API version defaults to `2025-04-01-preview`. A full request URL like `https://<resource>.cognitiveservices.azure.com/openai/responses?api-version=...` works as the endpoint too. Instead of Settings you can set `AI_FOUNDRY_URL`, `AI_FOUNDRY_MODEL`, `AI_FOUNDRY_API_KEY` and `AI_FOUNDRY_API_VERSION` before starting the app; a field set in Settings wins over its variable. These values live in Slate's settings file in your user data folder, never in this repo. Keys and connection passwords are encrypted with the OS keychain (`safeStorage`).
+Autocomplete runs on an Azure OpenAI deployment in Azure AI Foundry (`AzureOpenAI` from the `openai` package, Responses API, low reasoning effort). In Settings, enter the resource endpoint, the deployment name and an API key; the API version defaults to `2025-04-01-preview`. A full request URL like `https://<resource>.cognitiveservices.azure.com/openai/responses?api-version=...` works as the endpoint too. Instead of Settings you can set `AI_FOUNDRY_URL`, `AI_FOUNDRY_MODEL`, `AI_FOUNDRY_API_KEY` and `AI_FOUNDRY_API_VERSION` before starting the app; a field set in Settings wins over its variable. These values live in Slate's settings file in your user data folder, never in this repo. Keys and connection passwords are encrypted with the OS keychain (`safeStorage`).
 
 ## Development
 

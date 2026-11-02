@@ -84,7 +84,7 @@ async function launch() {
     env: {
       ...process.env,
       SLATE_USER_DATA: userData,
-      // A full request URL, like monocasi's AI_FOUNDRY_URL values: only its origin should be used.
+      // A full request URL as AI_FOUNDRY_URL: only its origin should be used.
       AI_FOUNDRY_URL: `${mockUrl}/openai/responses?api-version=2025-04-01-preview`,
       AI_FOUNDRY_MODEL: 'slate-test-deployment',
       AI_FOUNDRY_API_KEY: 'test-key',

@@ -77,7 +77,7 @@ function readSettings(file: string): StoredSettings {
   return { ...settings, environmentVariables: withRenamedEnvironmentVariables(settings.environmentVariables ?? {}) }
 }
 
-// The same variables monocasi's services read, for dev runs and setups without Settings.
+// Environment variables for dev runs and setups without Settings.
 const env = (name: string) => process.env[name]?.trim() || ''
 
 function writeJson(file: string, value: unknown) {
