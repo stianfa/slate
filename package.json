@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "description": "A slim PostgreSQL client for developers",
   "author": "Stian",
+  "license": "MIT",
   "private": true,
   "main": "out/main/index.js",
   "scripts": {

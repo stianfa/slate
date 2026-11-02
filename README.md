@@ -80,3 +80,7 @@ Slate runs on macOS with the native traffic-light buttons and a standard menu. E
 - `src/preload` exposes a typed `window.slate.api` bridge. Channel names match the `Api` interface in `src/shared/api.ts`.
 - `src/renderer` is React with a zustand store. The editor is CodeMirror 6, and the AI ghost text lives in `editor/ghost.ts`.
 - `src/shared/sql.ts` splits scripts into statements, handling quotes, dollar quoting and comments. Main and renderer both use it.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
