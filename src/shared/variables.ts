@@ -4,6 +4,7 @@
 // context, which works in more places than bind parameters do: ":since is null" and
 // "interval :d" fail with parameters ("could not determine data type") but work as literals.
 import { isIdentChar, leadingKeyword, splitStatements, tokenize } from './sql'
+import { ENVIRONMENTS, type Environment, type EnvironmentVariables } from './types'
 
 export type VariableValues = Record<string, string | null>
 
@@ -131,4 +132,38 @@ export function bindVariables(statement: string, values: VariableValues): BoundS
   }
 
   return { text, missing, missingAt, map }
+}
+
+export interface ValueSuggestion {
+  value: string
+  /** Where the value was set: an environment, the global values, or another history entry. */
+  source: Environment | 'global' | 'history'
+}
+
+/**
+ * Values a variable already has elsewhere, for the list under its field: the database's
+ * environment first, then the global value, then other history entries (pass them most recent
+ * first), then the other environments. Positional $1 values mean something else in every query,
+ * so they get none. NULL and empty values are left out, and each value is listed once.
+ */
+export function suggestValues(
+  key: string,
+  history: (VariableValues | undefined)[],
+  vars: EnvironmentVariables | undefined,
+  environment: Environment | undefined,
+  limit = 20
+): ValueSuggestion[] {
+  if (key.startsWith('$')) return []
+  const out: ValueSuggestion[] = []
+  const seen = new Set<string>()
+  const add = (value: string | null | undefined, source: ValueSuggestion['source']) => {
+    if (!value || seen.has(value) || out.length >= limit) return
+    seen.add(value)
+    out.push({ value, source })
+  }
+  if (environment) add(vars?.[environment]?.[key], environment)
+  add(vars?.global?.[key], 'global')
+  for (const values of history) add(values?.[key], 'history')
+  for (const env of ENVIRONMENTS) if (env.id !== environment) add(vars?.[env.id]?.[key], env.id)
+  return out
 }
