@@ -197,10 +197,17 @@ try {
     // A long result turns into many columns; only those in view are drawn.
     await setEditor('select * from products order by id limit 100;')
     await page.keyboard.press(`${mod}+Enter`)
+    // The two-row result above has a Row 1 column too, so wait for the new result itself.
+    await page.locator('.results-summary', { hasText: '100 rows' }).waitFor()
     await page.locator('.grid-head', { hasText: /^Row 1$/ }).waitFor()
     if ((await page.locator('.grid-head').count()) >= 100) throw new Error('every column was drawn')
-    await page.locator('.grid').evaluate((el) => (el.scrollLeft = el.scrollWidth))
-    await page.locator('.grid-head', { hasText: 'Row 100' }).waitFor()
+    // The grid scrolls back to the start when a result arrives, which can undo an early scroll.
+    const lastColumn = page.locator('.grid-head', { hasText: 'Row 100' })
+    for (let i = 0; i < 20 && !(await lastColumn.isVisible()); i++) {
+      await page.locator('.grid').evaluate((el) => (el.scrollLeft = el.scrollWidth))
+      await page.waitForTimeout(100)
+    }
+    await lastColumn.waitFor()
 
     await page.getByRole('button', { name: 'Transpose' }).click()
     await page.locator('.grid-head', { hasText: 'sku' }).waitFor()
