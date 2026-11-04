@@ -751,7 +751,17 @@ function OpenCell({
   onClose(refocus: boolean): void
 }) {
   const field = useRef<HTMLTextAreaElement>(null)
-  const longest = Math.max(...text.split('\n').map((line) => textWidth(line, fonts().cell)))
+  const longest = useMemo(() => {
+    // A loop rather than Math.max(...lines), which overflows the stack on a value with many lines.
+    // It stops at the widest the field gets, so a long value isn't measured line by line.
+    const font = fonts().cell
+    let widest = 0
+    for (const line of text.split('\n')) {
+      widest = Math.max(widest, textWidth(line, font))
+      if (widest >= MAX_OPEN_WIDTH) break
+    }
+    return widest
+  }, [text])
   // Padding and border take 23px; a little more keeps a line that just fits from wrapping.
   const fieldWidth = Math.round(Math.max(width, Math.min(MAX_OPEN_WIDTH, longest + 30)))
 
@@ -772,10 +782,10 @@ function OpenCell({
       rows={1}
       readOnly
       spellCheck={false}
-      // The grid's own keys (arrows, Cmd+C for the whole cell) would get in the way here.
+      // The grid ignores keys from inside it, so arrows and Cmd+C act on the text here, while
+      // app-wide shortcuts still work.
       onKeyDown={(e) => {
-        e.stopPropagation()
-        if (e.key === 'Escape' || e.key === 'Enter') {
+        if ((e.key === 'Escape' || e.key === 'Enter') && !e.metaKey && !e.ctrlKey) {
           e.preventDefault()
           onClose(true)
         }

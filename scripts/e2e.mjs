@@ -197,6 +197,27 @@ try {
     const value = await page.locator('.value-view').textContent()
     if (!value.includes('\n  "beta"')) throw new Error(`json not pretty printed: ${value}`)
     await page.keyboard.press('Escape')
+    await page.locator('.value-view').waitFor({ state: 'detached' })
+
+    // App-wide shortcuts still work from the open value.
+    await page.locator('.grid-row').first().locator('.grid-cell').nth(2).dblclick()
+    await open.waitFor()
+    await page.keyboard.press(`${mod}+K`)
+    await page.locator('.palette').waitFor()
+    await open.waitFor({ state: 'detached' })
+    await page.keyboard.press('Escape')
+    await page.locator('.palette').waitFor({ state: 'detached' })
+
+    // A value with very many lines opens too.
+    await setEditor("select repeat(E'x\\n', 200000) as many;")
+    await page.keyboard.press(`${mod}+Enter`)
+    await page.locator('.grid-head', { hasText: 'many' }).waitFor()
+    await page.locator('.grid-row').first().locator('.grid-cell').first().dblclick()
+    await open.waitFor()
+    const lines = (await open.inputValue()).split('\n').length
+    if (lines !== 200001) throw new Error(`the open value had ${lines} lines`)
+    await page.keyboard.press('Escape')
+    await open.waitFor({ state: 'detached' })
   })
 
   await step('transpose a result', async () => {
