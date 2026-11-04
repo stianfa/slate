@@ -2032,6 +2032,28 @@ select {
   font: inherit;
 }
 
+/* A double-clicked cell's whole value, selectable. */
+.grid-open-cell {
+  position: absolute;
+  z-index: 1;
+  min-height: 26px;
+  margin: 0;
+  padding: 4px 10px;
+  font: inherit;
+  line-height: 18px;
+  color: var(--text);
+  background: var(--bg-input);
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  box-shadow: var(--shadow);
+  outline: none;
+  resize: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: auto;
+  user-select: text;
+}
+
 .grid-cell .null {
   color: var(--text-faint);
   font-style: italic;

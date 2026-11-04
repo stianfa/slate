@@ -174,7 +174,25 @@ try {
   })
 
   await step('copy and inspect values', async () => {
+    // A double-click shows the whole value in place, selected, so part of it can be copied.
     await page.locator('.grid-row').first().locator('.grid-cell').nth(2).dblclick()
+    const open = page.locator('.grid-open-cell')
+    await open.waitFor()
+    const raw = await open.inputValue()
+    const selected = await open.evaluate((el) => [el.selectionStart, el.selectionEnd])
+    if (!raw.includes('"beta"') || selected[0] !== 0 || selected[1] !== raw.length) {
+      throw new Error(`the whole value should be shown and selected: ${raw} ${selected}`)
+    }
+    await open.evaluate((el) => el.setSelectionRange(0, 5))
+    await page.keyboard.press(`${mod}+C`)
+    const clipboard = await app.evaluate(({ clipboard }) => clipboard.readText())
+    if (clipboard !== raw.slice(0, 5)) throw new Error(`copied "${clipboard}" instead of the selected text`)
+    await shot('06b-open-cell')
+    await page.keyboard.press('Escape')
+    await open.waitFor({ state: 'detached' })
+
+    // Shift+Enter on the selected cell still opens the viewer, with JSON pretty-printed.
+    await page.keyboard.press('Shift+Enter')
     await page.locator('.value-view').waitFor()
     const value = await page.locator('.value-view').textContent()
     if (!value.includes('\n  "beta"')) throw new Error(`json not pretty printed: ${value}`)
