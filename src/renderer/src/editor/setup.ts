@@ -1,4 +1,5 @@
 import {
+  acceptCompletion,
   autocompletion,
   closeBrackets,
   closeBracketsKeymap,
@@ -202,6 +203,10 @@ export function createExtensions(options: {
     placeholder(`Write SQL here. ${modKey}+Enter runs the statement under the cursor.`),
     Prec.highest(
       keymap.of([
+        // Tab picks the highlighted completion, like Enter. Without the list open it falls through to
+        // the AI suggestion (ghost.ts) and then to indenting. This comes before ghostText, so the list
+        // wins when both show (after Alt+\).
+        { key: 'Tab', run: acceptCompletion },
         { key: 'Mod-Enter', run: (v) => options.onRun(v, 'smart') },
         { key: 'Shift-Mod-Enter', run: (v) => options.onRun(v, 'all') },
         // Shift+Alt+F, matched by physical key: on macOS, Option+Shift+F types a character (Ï on a
