@@ -599,7 +599,11 @@ try {
     await page.keyboard.type('select * from organizations where pl', { delay: 10 })
     await page.locator('.cm-tooltip-autocomplete li[aria-selected]', { hasText: 'plan' }).waitFor()
     await shot('07-autocomplete')
-    await page.keyboard.press('Escape')
+    // Tab picks the highlighted completion, like Enter.
+    await page.keyboard.press('Tab')
+    await page.locator('.cm-tooltip-autocomplete').waitFor({ state: 'detached' })
+    const text = await page.locator('.cm-content').textContent()
+    if (text !== 'select * from organizations where plan') throw new Error(`Tab left "${text}"`)
   })
 
   await step('database diagram', async () => {
