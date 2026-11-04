@@ -24,6 +24,9 @@ const MAX_CELL_CHARS = 400
 // Wider grids (a transposed result has a column per row) only render the columns in view.
 const MAX_FULL_COLUMNS = 60
 const COL_OVERSCAN = 4
+// Cell text is cut to one line; a double-click shows the whole value in a field you can select from.
+const MAX_OPEN_WIDTH = 560
+const MAX_OPEN_HEIGHT = 260
 
 /** The focused cell and the corner the selection started from. A null column selects whole rows. */
 type Selection = { row: number; col: number | null; anchorRow: number; anchorCol: number | null } | null
@@ -155,6 +158,8 @@ export function DataGrid({
   const [editing, setEditing] = useState<{ row: number; col: number; text: string; dirty: boolean } | null>(null)
   // Mirrors `editing`, so the blur that follows Enter or Escape doesn't finish the edit a second time.
   const editingRef = useRef(editing)
+  // A cell that can't be edited, showing its whole value over the grid.
+  const [opened, setOpened] = useState<{ row: number; col: number } | null>(null)
   // A row to scroll to once it has been drawn, e.g. one just added.
   const reveal = useRef<number | null>(null)
 
@@ -164,11 +169,15 @@ export function DataGrid({
     setSelection(null)
     editingRef.current = null
     setEditing(null)
+    setOpened(null)
     scroller.current?.scrollTo({ top: 0, left: 0 })
   }, [result.fields, transposed])
 
   // Sorting or filtering moves rows out from under the selection.
-  useEffect(() => setSelection(null), [order])
+  useEffect(() => {
+    setSelection(null)
+    setOpened(null)
+  }, [order])
 
   useLayoutEffect(() => {
     const el = scroller.current
@@ -411,6 +420,12 @@ export function DataGrid({
     else if (value !== null && value !== undefined) onOpenValue({ value, field })
   }
 
+  /** Shows a value that can't be edited in full over its cell, where part of it can be selected and copied. */
+  const showValue = (r: number, c: number) => {
+    const value = valueAt(r, c)
+    if (value !== null && value !== undefined) setOpened({ row: r, col: c })
+  }
+
   /**
    * Edits a cell in place. JSON and values with line breaks open in the value editor instead, which
    * shows JSON laid out and keeps line breaks.
@@ -603,7 +618,7 @@ export function DataGrid({
               className={`grid-cell${field.numeric ? ' num' : ''}${focused ? ' selected' : inRange ? ' in-range' : ''}${computed ? ' computed' : ''}${changed ? ' changed' : ''}${edited ? ' editing' : ''}`}
               style={windowed ? { gridColumn: c + 2 } : undefined}
               onMouseDown={(e) => select(r, c, e)}
-              onDoubleClick={() => (canEdit(r, c) ? startEdit(r, c) : openValue(r, c))}
+              onDoubleClick={() => (canEdit(r, c) ? startEdit(r, c) : showValue(r, c))}
             >
               {edited ? (
                 <input
@@ -700,10 +715,82 @@ export function DataGrid({
           })}
         </div>
         {rowEls}
+        {opened && opened.row < rowCount && opened.col < colCount && (
+          <OpenCell
+            key={`${opened.row}/${opened.col}`}
+            text={displayValue(valueAt(opened.row, opened.col) ?? '', fieldAt(opened.row, opened.col))}
+            top={HEADER_HEIGHT + opened.row * ROW_HEIGHT}
+            left={headWidth + offsets[opened.col]}
+            width={colWidths[opened.col]}
+            onClose={(refocus) => {
+              setOpened(null)
+              if (refocus) scroller.current?.focus()
+            }}
+          />
+        )}
       </div>
       {result.fields.length > 0 && rowCount === 0 && (
         <div className="grid-empty">{result.rows.length ? 'No rows match the filter' : 'No rows'}</div>
       )}
     </div>
+  )
+}
+
+/** A cell's whole value over the cell, read-only, so part of it can be selected and copied. */
+function OpenCell({
+  text,
+  top,
+  left,
+  width,
+  onClose
+}: {
+  text: string
+  top: number
+  left: number
+  width: number
+  onClose(refocus: boolean): void
+}) {
+  const field = useRef<HTMLTextAreaElement>(null)
+  const longest = useMemo(() => {
+    // A loop rather than Math.max(...lines), which overflows the stack on a value with many lines.
+    // It stops at the widest the field gets, so a long value isn't measured line by line.
+    const font = fonts().cell
+    let widest = 0
+    for (const line of text.split('\n')) {
+      widest = Math.max(widest, textWidth(line, font))
+      if (widest >= MAX_OPEN_WIDTH) break
+    }
+    return widest
+  }, [text])
+  // Padding and border take 23px; a little more keeps a line that just fits from wrapping.
+  const fieldWidth = Math.round(Math.max(width, Math.min(MAX_OPEN_WIDTH, longest + 30)))
+
+  useLayoutEffect(() => {
+    const el = field.current
+    if (!el) return
+    el.style.height = `${Math.min(MAX_OPEN_HEIGHT, Math.max(ROW_HEIGHT, el.scrollHeight + 3))}px`
+    el.focus()
+    el.select()
+  }, [])
+
+  return (
+    <textarea
+      ref={field}
+      className="grid-open-cell"
+      style={{ top, left, width: fieldWidth }}
+      value={text}
+      rows={1}
+      readOnly
+      spellCheck={false}
+      // The grid ignores keys from inside it, so arrows and Cmd+C act on the text here, while
+      // app-wide shortcuts still work.
+      onKeyDown={(e) => {
+        if ((e.key === 'Escape' || e.key === 'Enter') && !e.metaKey && !e.ctrlKey) {
+          e.preventDefault()
+          onClose(true)
+        }
+      }}
+      onBlur={() => onClose(false)}
+    />
   )
 }
