@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { bindVariables, findPlaceholders, quoteLiteral, resolveVariables, uniqueVariables } from '../src/shared/variables'
+import {
+  bindVariables,
+  findPlaceholders,
+  quoteLiteral,
+  resolveVariables,
+  suggestValues,
+  uniqueVariables
+} from '../src/shared/variables'
 
 const labels = (sql: string) => findPlaceholders(sql).map((p) => p.label)
 
@@ -83,5 +90,35 @@ describe('bindVariables', () => {
 
   it('leaves statements without placeholders untouched', () => {
     expect(bindVariables('select 1::int', {})).toMatchObject({ text: 'select 1::int', missing: [] })
+  })
+})
+
+describe('suggestValues', () => {
+  const vars = { production: { org: 'acme' }, test: { org: 'test-42' }, global: { org: 'shared' } }
+
+  it('lists the environment, global, history and other environments in that order', () => {
+    expect(suggestValues('org', [{ org: '7' }, { org: '9' }], vars, 'production')).toEqual([
+      { value: 'acme', source: 'production' },
+      { value: 'shared', source: 'global' },
+      { value: '7', source: 'history' },
+      { value: '9', source: 'history' },
+      { value: 'test-42', source: 'test' }
+    ])
+  })
+
+  it('lists each value once, and leaves out NULL and empty values', () => {
+    const got = suggestValues('org', [{ org: 'acme' }, { org: null }, { org: '' }, undefined, { other: 'x' }], vars, 'production')
+    expect(got.map((s) => s.value)).toEqual(['acme', 'shared', 'test-42'])
+  })
+
+  it('works without an environment mark or settings', () => {
+    expect(suggestValues('org', [{ org: '7' }], undefined, undefined)).toEqual([{ value: '7', source: 'history' }])
+    expect(suggestValues('org', [], vars, undefined).map((s) => s.source)).toEqual(['global', 'test', 'production'])
+  })
+
+  it('gives positional parameters none, and stops at the limit', () => {
+    expect(suggestValues('$1', [{ $1: '5' }], undefined, undefined)).toEqual([])
+    const many = Array.from({ length: 30 }, (_, i) => ({ org: String(i) }))
+    expect(suggestValues('org', many, undefined, undefined, 5)).toHaveLength(5)
   })
 })

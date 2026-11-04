@@ -682,6 +682,21 @@ try {
     if (await field.locator('.env-badge').count()) throw new Error('override still marked as inherited')
     await page.getByRole('button', { name: 'Use the Production value' }).click()
     if ((await field.locator('input').inputValue()) !== '3') throw new Error('reset did not restore the production value')
+
+    // The list under the field offers values set elsewhere, such as Test's.
+    await field.getByRole('button', { name: 'Values used before for :org' }).click()
+    await page.locator('.var-values .var-value', { hasText: 'TEST' }).waitFor()
+    await page.waitForTimeout(200) // let the list finish fading in
+    await shot('16a-variable-values')
+    await page.locator('.var-values .var-value', { hasText: '7' }).click()
+    if ((await field.locator('input').inputValue()) !== '7') throw new Error('picked value not filled in')
+    await page.keyboard.press('Enter')
+    await page.waitForFunction(() => document.querySelector('.grid-row .grid-cell')?.textContent === '7')
+    // Picking the environment's own value from the keyboard goes back to inheriting it.
+    await page.keyboard.press('ArrowDown')
+    await page.keyboard.press('Enter')
+    await field.locator('.env-badge', { hasText: 'PROD' }).waitFor()
+    if (await page.locator('.var-values').count()) throw new Error('value list still open after picking')
   })
 
   await step('global variables apply in every environment', async () => {
