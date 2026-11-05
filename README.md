@@ -8,7 +8,7 @@ A slim PostgreSQL desktop client for developers. Connect, browse tables and colu
 
 - **Several connections at once.** Each connection lists every database on its server; each query picks its own connection and database. Paste a `postgres://` URL to fill in the connection form.
 - **History per database instead of tabs.** Click a database in the explorer to enter it. The history pane to its right then lists that database's queries and diagrams, most recent first and grouped by day, and new queries go to that database. Entering a database opens its most recent query, or a blank one if it has none (a blank query you leave untouched is removed again). An entry shows its name (or the first line of its SQL when it has none) and the result of its last run. You can search the history, double-click an entry to rename it, and delete one with an undo. Moving a query to another database in the toolbar moves it to that database's history. The button in the title bar hides the pane.
-- **Schema browser.** Tables, views and columns with types, primary keys, foreign keys and row estimates. Filter by name. Double-click a table to see its first 100 rows.
+- **Schema browser.** Tables, views and columns with types, primary keys, foreign keys and row estimates. The filter above the tree shows only the databases and tables whose names contain the text: a database whose name matches shows all its tables, and one with matching tables opens on just those. Tables are only searched in databases you've opened (their schema has loaded), and the database you're in always stays. Double-click a table to see its first 100 rows.
 - **Editor.** PostgreSQL syntax highlighting, completion for tables, columns (including columns of the tables your statement uses) and keywords; `Tab` or `Enter` picks the highlighted one. `Ctrl+Enter` runs the selection or the statement under the cursor, which is marked with a bar in the margin. `Ctrl+Shift+Enter` runs the whole script.
 - **AI autocomplete.** After a pause in typing, an Azure OpenAI model suggests the rest of the query as grey ghost text, using the tab's database schema. `Tab` accepts, `Esc` dismisses, `Ctrl+→` accepts one word, `Alt+\` asks right away. Write a comment like `-- users who signed up this week` and it writes the query. Only the schema and the text around the cursor are sent, never row data.
 - **AI chat.** `Ctrl+J` (or the chat button in the query toolbar) opens a chat next to the editor. Describe the query you want, or ask to change or fix the one in the editor, and the answer streams in with the SQL in a block you can put in the editor with **Replace query** or **Insert**. Each query keeps its own conversation. The chat sees the database's schema, the editor text and the last error message, never rows, and it doesn't run anything.
@@ -50,7 +50,7 @@ A slim PostgreSQL desktop client for developers. Connect, browse tables and colu
 | `Ctrl+B` | Show or hide history |
 | `Ctrl+J` | Open or close the AI chat |
 | `Ctrl+R` | Refresh the current database's schema |
-| `Ctrl+Shift+F` | Filter tables |
+| `Ctrl+Shift+F` | Filter databases and tables |
 | `Shift+Alt+F` | Format SQL |
 | `Ctrl+F` | Find in editor |
 | `Ctrl+,` | Settings |

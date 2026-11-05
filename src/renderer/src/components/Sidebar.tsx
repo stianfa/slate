@@ -76,7 +76,31 @@ function Row({
   )
 }
 
-function TableNode({ target, table, depth, filtering }: { target: Target; table: TableInfo; depth: number; filtering: boolean }) {
+/** The sidebar filter as it is matched: trimmed and lower-cased. */
+const useFilter = () => useStore((s) => s.filter.trim().toLowerCase())
+
+const matches = (name: string, filter: string) => name.toLowerCase().includes(filter)
+
+/** Whether the filter shows a database: by its name, or by a table in its schema once that has loaded. */
+function databaseMatches(database: string, tables: TableInfo[] | undefined, filter: string) {
+  return !filter || matches(database, filter) || Boolean(tables?.some((t) => matches(t.name, filter)))
+}
+
+/** A name with the part the filter matched marked, so it's clear why a row is shown. */
+function Highlight({ text, filter }: { text: string; filter: string }) {
+  const at = filter ? text.toLowerCase().indexOf(filter) : -1
+  if (at < 0) return <>{text}</>
+  return (
+    <>
+      {text.slice(0, at)}
+      <mark className="tree-match">{text.slice(at, at + filter.length)}</mark>
+      {text.slice(at + filter.length)}
+    </>
+  )
+}
+
+/** `filter` is set when the database's tables are being filtered, and empty otherwise. */
+function TableNode({ target, table, depth, filter }: { target: Target; table: TableInfo; depth: number; filter: string }) {
   const key = `t:${targetKey(target)}/${table.schema}.${table.name}`
   const open = useStore((s) => Boolean(s.expanded[key]))
   const toggle = useStore((s) => s.toggle)
@@ -91,9 +115,9 @@ function TableNode({ target, table, depth, filtering }: { target: Target; table:
         onClick={() => toggle(key)}
         onDoubleClick={() => openTable(target, table)}
         icon={isView ? <Eye size={13} /> : <Table2 size={13} />}
-        label={table.name}
+        label={<Highlight text={table.name} filter={filter} />}
         title={`${table.schema}.${table.name}${table.kind !== 'table' ? ` (${table.kind})` : ''} — double-click to query`}
-        meta={!filtering && table.estimatedRows !== null && table.estimatedRows > 0 ? formatEstimate(table.estimatedRows) : undefined}
+        meta={!filter && table.estimatedRows !== null && table.estimatedRows > 0 ? formatEstimate(table.estimatedRows) : undefined}
         className={isView ? 'is-view' : ''}
         actions={
           <>
@@ -156,7 +180,7 @@ function DatabaseNode({ connection, database, depth }: { connection: ConnectionC
   const key = `d:${targetKey(target)}`
   const open = useStore((s) => Boolean(s.expanded[key]))
   const schema = useStore((s) => s.schemas[targetKey(target)])
-  const filter = useStore((s) => s.filter.trim().toLowerCase())
+  const filter = useFilter()
   const toggle = useStore((s) => s.toggle)
   const loadSchema = useStore((s) => s.loadSchema)
   const openDiagram = useStore((s) => s.openDiagram)
@@ -164,13 +188,15 @@ function DatabaseNode({ connection, database, depth }: { connection: ConnectionC
   const isCurrent = useStore((s) => s.currentTarget !== null && targetKey(s.currentTarget) === targetKey(target))
   const expanded = useStore((s) => s.expanded)
 
+  // A database whose name matches shows all its tables; otherwise the filter picks its tables.
+  const byTables = filter !== '' && !matches(database, filter)
   const tables = useMemo(() => {
     const all = schema?.data?.tables ?? []
-    return filter ? all.filter((t) => t.name.toLowerCase().includes(filter)) : all
-  }, [schema?.data, filter])
+    return byTables ? all.filter((t) => matches(t.name, filter)) : all
+  }, [schema?.data, byTables, filter])
   const schemas = useMemo(() => [...new Set(tables.map((t) => t.schema))], [tables])
   const grouped = schemas.length > 1 || (schemas.length === 1 && schemas[0] !== 'public')
-  const showChildren = open || (filter && tables.length > 0)
+  const showChildren = open || (byTables && tables.length > 0)
 
   // Clicking a database enters it (its history and new queries follow); clicking it again folds it.
   const onToggle = () => {
@@ -193,12 +219,12 @@ function DatabaseNode({ connection, database, depth }: { connection: ConnectionC
         icon={schema?.status === 'loading' ? <Spinner size={11} /> : <Database size={13} />}
         label={
           <>
-            {database}
+            <Highlight text={database} filter={filter} />
             {ownEnvironment && <EnvBadge env={ownEnvironment} />}
           </>
         }
         className={`database${isCurrent ? ' current' : ''}`}
-        meta={schema?.data && !filter ? schema.data.tables.length : undefined}
+        meta={schema?.data && (byTables ? `${tables.length} of ${schema.data.tables.length}` : schema.data.tables.length)}
         actions={
           <>
             <button className="tree-btn" title="Database diagram" onClick={() => openDiagram(target)}>
@@ -219,14 +245,14 @@ function DatabaseNode({ connection, database, depth }: { connection: ConnectionC
       )}
       {showChildren && schema?.data && tables.length === 0 && (
         <div className="tree-note" style={{ paddingLeft: 30 + depth * INDENT }}>
-          {filter ? 'No matching tables' : 'No tables'}
+          {byTables ? 'No matching tables' : 'No tables'}
         </div>
       )}
       {showChildren &&
         (grouped
           ? schemas.map((name) => {
               const schemaKey = `s:${targetKey(target)}/${name}`
-              const schemaOpen = Boolean(filter) || expanded[schemaKey] !== false
+              const schemaOpen = byTables || expanded[schemaKey] !== false
               return (
                 <div key={name}>
                   <Row
@@ -241,13 +267,13 @@ function DatabaseNode({ connection, database, depth }: { connection: ConnectionC
                     tables
                       .filter((t) => t.schema === name)
                       .map((t) => (
-                        <TableNode key={t.name} target={target} table={t} depth={depth + 2} filtering={Boolean(filter)} />
+                        <TableNode key={t.name} target={target} table={t} depth={depth + 2} filter={byTables ? filter : ''} />
                       ))}
                 </div>
               )
             })
           : tables.map((t) => (
-              <TableNode key={`${t.schema}.${t.name}`} target={target} table={t} depth={depth + 1} filtering={Boolean(filter)} />
+              <TableNode key={`${t.schema}.${t.name}`} target={target} table={t} depth={depth + 1} filter={byTables ? filter : ''} />
             )))}
     </>
   )
@@ -264,6 +290,19 @@ function ConnectionNode({ connection }: { connection: ConnectionConfig }) {
   const status = state?.status ?? 'idle'
   const databases = state?.server?.databases ?? [connection.database]
   const connectionEnv = ENVIRONMENTS.find((e) => e.id === connection.environment) ?? null
+  const filter = useFilter()
+  const schemas = useStore((s) => s.schemas)
+  const current = useStore((s) => (s.currentTarget ? targetKey(s.currentTarget) : null))
+
+  // The database you are in always stays, so the filter never hides where you are.
+  const shown = useMemo(
+    () =>
+      databases.filter((database) => {
+        const key = targetKey({ connectionId: connection.id, database })
+        return key === current || databaseMatches(database, schemas[key]?.data?.tables, filter)
+      }),
+    [databases, connection.id, schemas, filter, current]
+  )
 
   const onClick = () => {
     if (status === 'idle' || status === 'error') void connect(connection.id)
@@ -313,7 +352,12 @@ function ConnectionNode({ connection }: { connection: ConnectionConfig }) {
           {state?.error}
         </div>
       )}
-      {open && status === 'connected' && databases.map((db) => <DatabaseNode key={db} connection={connection} database={db} depth={1} />)}
+      {open && status === 'connected' && shown.map((db) => <DatabaseNode key={db} connection={connection} database={db} depth={1} />)}
+      {open && status === 'connected' && shown.length === 0 && (
+        <div className="tree-note" style={{ paddingLeft: 30 }}>
+          No matching databases
+        </div>
+      )}
     </div>
   )
 }
@@ -323,6 +367,18 @@ export function Sidebar() {
   const filter = useStore((s) => s.filter)
   const setFilter = useStore((s) => s.setFilter)
   const setDialog = useStore((s) => s.setDialog)
+  // Tables are only known once a database's schema has loaded, so say when some weren't searched.
+  const unsearched = useStore(
+    (s) =>
+      s.filter.trim() !== '' &&
+      s.connections.some((c) => {
+        const state = s.conn[c.id]
+        return (
+          state?.status === 'connected' &&
+          (state.server?.databases ?? []).some((database) => !s.schemas[targetKey({ connectionId: c.id, database })]?.data)
+        )
+      })
+  )
   const width = useStore((s) => s.sidebarWidth)
   const setLayout = useStore((s) => s.setLayout)
 
@@ -346,8 +402,8 @@ export function Sidebar() {
         <input
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          placeholder="Filter tables"
-          title={`Filter tables (${modKey}+Shift+F)`}
+          placeholder="Filter databases and tables"
+          title={`Filter databases and tables (${modKey}+Shift+F)`}
           spellCheck={false}
         />
         {filter && (
@@ -371,6 +427,7 @@ export function Sidebar() {
             <Plus size={13} /> Add a connection
           </button>
         )}
+        {unsearched && <div className="tree-note tree-hint">Tables are only searched in databases you've opened.</div>}
       </div>
       <div className="sidebar-foot">
         <button className="ghost-btn" onClick={() => setDialog({ type: 'settings' })}>

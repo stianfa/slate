@@ -887,8 +887,34 @@ try {
 
     await page.keyboard.press(`${mod}+Shift+F`)
     if (!(await page.locator('.sidebar .sidebar-search input').evaluate((el) => el === document.activeElement))) {
-      throw new Error('the table filter is not focused')
+      throw new Error('the sidebar filter is not focused')
     }
+  })
+
+  await step('filter databases and tables in the sidebar', async () => {
+    const filter = page.locator('.sidebar .sidebar-search input')
+    const database = (name) => page.locator('.tree-row.database', { hasText: new RegExp(`^${name}`) })
+
+    // A table name finds its database, open on just the matching tables.
+    await filter.fill('order')
+    await page.locator('.tree-row', { hasText: /^order_items/ }).waitFor()
+    await page.locator('.tree-row', { hasText: /^users/ }).waitFor({ state: 'detached' })
+    await database('scratch').waitFor({ state: 'detached' })
+    await database('postgres').waitFor({ state: 'detached' })
+    await database('shop').locator('.tree-meta', { hasText: / of / }).waitFor()
+    await page.locator('.tree-match', { hasText: 'order' }).first().waitFor()
+    await shot('19b-sidebar-filter')
+
+    // A database name finds the database, and the one you are in stays even without a match.
+    await filter.fill('scra')
+    await database('scratch').waitFor()
+    await database('postgres').waitFor({ state: 'detached' })
+    await database('shop').waitFor()
+    await page.locator('.tree-note', { hasText: 'No matching tables' }).waitFor()
+
+    await filter.fill('')
+    await database('postgres').waitFor()
+    await page.locator('.tree-row', { hasText: /^users/ }).waitFor()
   })
 
   await step('format SQL', async () => {
