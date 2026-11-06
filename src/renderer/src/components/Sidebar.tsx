@@ -200,6 +200,8 @@ function DatabaseNode({ connection, database, depth }: { connection: ConnectionC
   const names = useStore((s) => s.tableNames[targetKey(target)])
   const filter = useFilter()
   const toggle = useStore((s) => s.toggle)
+  const toggleFiltered = useStore((s) => s.toggleFiltered)
+  const filterCollapsed = useStore((s) => s.filterCollapsed)
   const loadSchema = useStore((s) => s.loadSchema)
   const openDiagram = useStore((s) => s.openDiagram)
   const selectDatabase = useStore((s) => s.selectDatabase)
@@ -216,16 +218,20 @@ function DatabaseNode({ connection, database, depth }: { connection: ConnectionC
   }, [all, byTables, filter])
   const schemas = useMemo(() => [...new Set(tables.map((t) => t.schema))], [tables])
   const grouped = schemas.length > 1 || (schemas.length === 1 && schemas[0] !== 'public')
-  const showChildren = open || (byTables && tables.length > 0)
+  // The filter opens a database on its matching tables, and folding it then only lasts until the filter changes.
+  const filtered = byTables && tables.length > 0
+  const showChildren = filtered ? !filterCollapsed[key] : open
 
   // Clicking a database enters it (its history and new queries follow); clicking it again folds it.
   const onToggle = () => {
     if (!isCurrent) {
       selectDatabase(target)
-      toggle(key, true)
+      if (filtered) toggleFiltered(key, false)
+      else toggle(key, true)
       void loadSchema(target)
       return
     }
+    if (filtered) return toggleFiltered(key)
     toggle(key)
     if (!open) void loadSchema(target)
   }
@@ -272,13 +278,13 @@ function DatabaseNode({ connection, database, depth }: { connection: ConnectionC
         (grouped
           ? schemas.map((name) => {
               const schemaKey = `s:${targetKey(target)}/${name}`
-              const schemaOpen = byTables || expanded[schemaKey] !== false
+              const schemaOpen = byTables ? !filterCollapsed[schemaKey] : expanded[schemaKey] !== false
               return (
                 <div key={name}>
                   <Row
                     depth={depth + 1}
                     open={schemaOpen}
-                    onClick={() => toggle(schemaKey, !schemaOpen)}
+                    onClick={() => (byTables ? toggleFiltered(schemaKey) : toggle(schemaKey, !schemaOpen))}
                     icon={<span className="schema-glyph">{'{}'}</span>}
                     label={name}
                     className="schema"

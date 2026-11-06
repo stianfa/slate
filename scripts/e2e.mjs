@@ -920,6 +920,20 @@ try {
     await page.locator('.tree-match', { hasText: 'order' }).first().waitFor()
     await shot('19b-sidebar-filter')
 
+    // What the filter opens can still be folded, until the filter changes.
+    const orderItems = page.locator('.tree-row', { hasText: /^order_items/ })
+    await database('shop').click()
+    await orderItems.waitFor({ state: 'detached' })
+    await database('shop').click()
+    await orderItems.waitFor()
+    await filter.fill('event')
+    const events = page.locator('.tree-row', { hasText: /^events/ })
+    await events.waitFor()
+    await page.locator('.tree-row.schema', { hasText: 'analytics' }).click()
+    await events.waitFor({ state: 'detached' })
+    await filter.fill('events')
+    await events.waitFor()
+
     // A database name finds the database, and the one you are in stays even without a match.
     await filter.fill('scra')
     await database('scratch').waitFor()

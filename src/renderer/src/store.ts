@@ -163,6 +163,8 @@ interface State extends Workspace {
   tabs: Tab[]
   settings: Settings | null
   filter: string
+  /** Databases and schemas folded while the sidebar filter shows them, by tree key. Cleared when the filter changes. */
+  filterCollapsed: Record<string, boolean>
   dialog: DialogState
   ai: AiState
   /** A production run waiting for the user to confirm its writes. */
@@ -225,6 +227,8 @@ interface State extends Workspace {
   openDiagram(target: Target): void
   toggle(key: string, open?: boolean): void
   setFilter(filter: string): void
+  /** Folds or unfolds a database or schema the sidebar filter opened, without touching its usual state. */
+  toggleFiltered(key: string, collapsed?: boolean): void
   setDialog(dialog: DialogState): void
   saveSettings(input: SettingsInput): Promise<Settings>
   setAi(ai: AiState): void
@@ -345,6 +349,7 @@ export const useStore = create<State>((set, get) => ({
   nameSearch: null,
   settings: null,
   filter: '',
+  filterCollapsed: {},
   dialog: null,
   ai: { status: 'idle' },
   pendingRun: null,
@@ -957,7 +962,12 @@ export const useStore = create<State>((set, get) => ({
   },
 
   setFilter(filter) {
-    set({ filter })
+    // A new search shows all its matches again.
+    set((s) => (s.filter === filter ? {} : { filter, filterCollapsed: {} }))
+  },
+
+  toggleFiltered(key, collapsed) {
+    set((s) => ({ filterCollapsed: { ...s.filterCollapsed, [key]: collapsed ?? !s.filterCollapsed[key] } }))
   },
 
   setDialog(dialog) {
