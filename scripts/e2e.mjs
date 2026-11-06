@@ -104,7 +104,7 @@ async function admin(sql, database = 'postgres') {
   const client = new pg.Client({ host: 'localhost', port: Number(port), user: 'slate', password: 'slate', database })
   await client.connect()
   try {
-    await client.query(sql)
+    return await client.query(sql)
   } finally {
     await client.end()
   }
@@ -951,6 +951,14 @@ try {
     await database('e2e_archive').locator('.tree-meta', { hasText: '1 of 1' }).waitFor()
     await hint.waitFor({ state: 'detached' })
     await shot('19c-sidebar-search-all')
+    // The search's own connection is gone again; only expanding a table opens the usual pool.
+    const slateSessions = async () =>
+      (await admin("SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = 'e2e_archive' AND application_name = 'Slate'"))
+        .rows[0].n
+    for (let i = 0; (await slateSessions()) > 0; i++) {
+      if (i === 20) throw new Error('the search left a connection to e2e_archive open')
+      await page.waitForTimeout(100)
+    }
     // Only the name is known until the table is expanded, which loads the schema.
     await invoices.click()
     await page.locator('.tree-row.column', { hasText: /^total/ }).waitFor()
