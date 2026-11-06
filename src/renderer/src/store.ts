@@ -25,6 +25,7 @@ import {
   type Settings,
   type SettingsInput,
   type TableInfo,
+  type TableName,
   type Target
 } from '@shared/types'
 import { api, onChatDelta } from './api'
@@ -153,6 +154,12 @@ interface State extends Workspace {
   connections: ConnectionConfig[]
   conn: Record<string, ConnState>
   schemas: Record<string, SchemaState>
+  /** Table names of databases whose schema hasn't loaded, from "Search all databases", by target key. */
+  tableNames: Record<string, TableName[]>
+  /** Why a database couldn't be searched, by target key. */
+  nameErrors: Record<string, string>
+  /** Progress while "Search all databases" runs, otherwise null. */
+  nameSearch: { done: number; total: number } | null
   tabs: Tab[]
   settings: Settings | null
   filter: string
@@ -179,6 +186,8 @@ interface State extends Workspace {
   connect(id: string): Promise<void>
   disconnect(id: string): Promise<void>
   loadSchema(target: Target, refresh?: boolean): Promise<void>
+  /** Fetches the table names of every connected database that hasn't been opened or searched yet. */
+  searchAllDatabases(): Promise<void>
   newTab(opts?: { target?: Target | null; sql?: string; title?: string }): string
   /** Removes an entry from the history; restoreDeleted() brings back the last one. */
   deleteTab(id: string): void
@@ -274,6 +283,10 @@ export const historyFor = (tabs: Tab[], target: Target | null) => historyOrder(t
 const isBlank = (t: Tab) =>
   t.kind !== 'diagram' && !t.title && !t.sql.trim() && !t.lastRun && !t.running && !t.chat?.length && !t.chatPending
 
+/** A map keyed by target, without the entries of one connection. */
+const withoutConnection = <T,>(map: Record<string, T>, connectionId: string) =>
+  Object.fromEntries(Object.entries(map).filter(([key]) => !key.startsWith(`${connectionId}/`)))
+
 const withoutBlanks = (tabs: Tab[], keep: string | null) => tabs.filter((t) => t.id === keep || !isBlank(t))
 
 /**
@@ -327,6 +340,9 @@ export const useStore = create<State>((set, get) => ({
   connections: [],
   conn: {},
   schemas: {},
+  tableNames: {},
+  nameErrors: {},
+  nameSearch: null,
   settings: null,
   filter: '',
   dialog: null,
@@ -488,7 +504,12 @@ export const useStore = create<State>((set, get) => ({
     set((s) => ({ conn: { ...s.conn, [id]: { status: 'connecting' } } }))
     try {
       const server = await api.connect(id)
-      set((s) => ({ conn: { ...s.conn, [id]: { status: 'connected', server } } }))
+      // Names found before may be from other connection details (saveConnection reconnects), so start over.
+      set((s) => ({
+        conn: { ...s.conn, [id]: { status: 'connected', server } },
+        tableNames: withoutConnection(s.tableNames, id),
+        nameErrors: withoutConnection(s.nameErrors, id)
+      }))
       const config = get().connections.find((c) => c.id === id)
       if (config) {
         get().toggle(`c:${id}`, true)
@@ -502,10 +523,12 @@ export const useStore = create<State>((set, get) => ({
 
   async disconnect(id) {
     await api.disconnect(id)
-    set((s) => {
-      const schemas = Object.fromEntries(Object.entries(s.schemas).filter(([k]) => !k.startsWith(`${id}/`)))
-      return { conn: { ...s.conn, [id]: { status: 'idle' } }, schemas }
-    })
+    set((s) => ({
+      conn: { ...s.conn, [id]: { status: 'idle' } },
+      schemas: withoutConnection(s.schemas, id),
+      tableNames: withoutConnection(s.tableNames, id),
+      nameErrors: withoutConnection(s.nameErrors, id)
+    }))
   },
 
   async loadSchema(target, refresh = false) {
@@ -523,6 +546,48 @@ export const useStore = create<State>((set, get) => ({
     } catch (e) {
       set((s) => ({ schemas: { ...s.schemas, [key]: { status: 'error', error: (e as Error).message } } }))
     }
+  },
+
+  async searchAllDatabases() {
+    if (get().nameSearch) return
+    const { connections, conn, schemas, tableNames } = get()
+    // One database at a time per server, each on a connection that closes straight after.
+    const queues = connections
+      .filter((c) => conn[c.id]?.status === 'connected')
+      .map((c) => ({
+        // Connecting or disconnecting replaces this object, so a later session never takes an earlier one's results.
+        session: conn[c.id],
+        targets: (conn[c.id]?.server?.databases ?? [])
+          .map((database) => ({ connectionId: c.id, database }))
+          .filter((t) => !schemas[targetKey(t)]?.data && !tableNames[targetKey(t)])
+      }))
+      .filter((queue) => queue.targets.length > 0)
+    const total = queues.reduce((n, queue) => n + queue.targets.length, 0)
+    if (total === 0) return
+    set({ nameSearch: { done: 0, total } })
+    const step = (patch: (s: State) => Partial<State>) =>
+      set((s) => ({ ...patch(s), nameSearch: s.nameSearch && { ...s.nameSearch, done: s.nameSearch.done + 1 } }))
+    await Promise.all(
+      queues.map(async ({ session, targets }) => {
+        const current = (connectionId: string) => get().conn[connectionId] === session
+        for (const target of targets) {
+          const key = targetKey(target)
+          if (!current(target.connectionId)) return
+          try {
+            const names = await api.listTableNames(target)
+            if (!current(target.connectionId)) return
+            step((s) => {
+              const { [key]: _, ...nameErrors } = s.nameErrors
+              return { tableNames: { ...s.tableNames, [key]: names }, nameErrors }
+            })
+          } catch (e) {
+            if (!current(target.connectionId)) return
+            step((s) => ({ nameErrors: { ...s.nameErrors, [key]: (e as Error).message } }))
+          }
+        }
+      })
+    )
+    set({ nameSearch: null })
   },
 
   newTab(opts = {}) {

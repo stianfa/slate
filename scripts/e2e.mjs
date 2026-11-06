@@ -98,6 +98,21 @@ async function launch() {
   return { app, page }
 }
 
+// A database the steps never open, so "Search all databases" has a table to find.
+const pg = require('pg')
+async function admin(sql, database = 'postgres') {
+  const client = new pg.Client({ host: 'localhost', port: Number(port), user: 'slate', password: 'slate', database })
+  await client.connect()
+  try {
+    await client.query(sql)
+  } finally {
+    await client.end()
+  }
+}
+await admin('DROP DATABASE IF EXISTS e2e_archive WITH (FORCE)')
+await admin('CREATE DATABASE e2e_archive')
+await admin('CREATE TABLE legacy_invoices (id int PRIMARY KEY, total numeric)', 'e2e_archive')
+
 let { app, page } = await launch()
 
 const step = async (name, fn) => {
@@ -912,6 +927,20 @@ try {
     await database('shop').waitFor()
     await page.locator('.tree-note', { hasText: 'No matching tables' }).waitFor()
 
+    // A table in a database you haven't opened is found once its names are fetched.
+    await filter.fill('invoice')
+    await database('e2e_archive').waitFor({ state: 'detached' })
+    const hint = page.locator('.tree-hint')
+    await hint.getByRole('button', { name: 'Search all databases' }).click()
+    const invoices = page.locator('.tree-row', { hasText: /^legacy_invoices/ })
+    await invoices.waitFor()
+    await database('e2e_archive').locator('.tree-meta', { hasText: '1 of 1' }).waitFor()
+    await hint.waitFor({ state: 'detached' })
+    await shot('19c-sidebar-search-all')
+    // Only the name is known until the table is expanded, which loads the schema.
+    await invoices.click()
+    await page.locator('.tree-row.column', { hasText: /^total/ }).waitFor()
+
     await filter.fill('')
     await database('postgres').waitFor()
     await page.locator('.tree-row', { hasText: /^users/ }).waitFor()
@@ -986,6 +1015,7 @@ try {
   process.exitCode = 1
 } finally {
   await app.close()
+  await admin('DROP DATABASE IF EXISTS e2e_archive WITH (FORCE)').catch(() => {})
   mock.close()
   rmSync(userData, { recursive: true, force: true })
   rmSync(downloads, { recursive: true, force: true })

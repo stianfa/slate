@@ -18,6 +18,7 @@ import {
   type SslMode,
   type StatementResult,
   type TableInfo,
+  type TableName,
   type Target,
   type TxStatus
 } from '@shared/types'
@@ -54,6 +55,12 @@ const RELATION_KINDS: Record<string, RelationKind> = {
   m: 'materialized view',
   f: 'foreign table'
 }
+
+/** The relations the schema browser lists, from `pg_class c` joined to `pg_namespace n`. */
+const LISTED_RELATIONS = `c.relkind IN ('r', 'p', 'v', 'm', 'f')
+           AND NOT c.relispartition
+           AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+           AND n.nspname NOT LIKE 'pg\\_toast%' AND n.nspname NOT LIKE 'pg\\_temp%'`
 
 function sslOption(mode: SslMode): pg.ClientConfig['ssl'] {
   if (mode === 'disable') return false
@@ -194,6 +201,30 @@ export class DbManager {
     return this.schemas.get(targetKey(target))
   }
 
+  /**
+   * Only the names of a database's tables, for the sidebar filter to search databases you haven't opened.
+   * It uses its own connection, closed straight after, rather than keeping a pool open for every database.
+   */
+  async tableNames(target: Target): Promise<TableName[]> {
+    const client = new pg.Client({ ...this.config(target), statement_timeout: 15_000 })
+    client.on('error', () => {})
+    try {
+      await client.connect()
+      const { rows } = await client.query<{ schema: string; name: string; kind: string }>(
+        `SELECT n.nspname AS schema, c.relname AS name, c.relkind AS kind
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE ${LISTED_RELATIONS}
+         ORDER BY n.nspname, c.relname`
+      )
+      return rows.map((r) => ({ schema: r.schema, name: r.name, kind: RELATION_KINDS[r.kind] ?? 'table' }))
+    } catch (e) {
+      throw new Error(explainConnectError((e as Error).message || String(e)))
+    } finally {
+      client.end().catch(() => {})
+    }
+  }
+
   async schema(target: Target, refresh = false): Promise<SchemaInfo> {
     const key = targetKey(target)
     const cached = this.schemas.get(key)
@@ -220,10 +251,7 @@ export class DbManager {
          JOIN pg_namespace n ON n.oid = c.relnamespace
          LEFT JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
          LEFT JOIN pg_attrdef d ON d.adrelid = c.oid AND d.adnum = a.attnum
-         WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
-           AND NOT c.relispartition
-           AND n.nspname NOT IN ('pg_catalog', 'information_schema')
-           AND n.nspname NOT LIKE 'pg\\_toast%' AND n.nspname NOT LIKE 'pg\\_temp%'
+         WHERE ${LISTED_RELATIONS}
          ORDER BY n.nspname, c.relname, a.attnum`
       ),
       pool.query<{

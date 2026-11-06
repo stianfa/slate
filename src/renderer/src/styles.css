@@ -769,6 +769,16 @@ select {
   line-height: 1.4;
 }
 
+.tree-hint .link-btn {
+  margin-left: 0;
+  font-size: inherit;
+}
+
+.tree-hint .spinner {
+  vertical-align: -1px;
+  margin-right: 4px;
+}
+
 /* The part of a name the sidebar filter matched. */
 .tree-match {
   background: var(--search-match);
