@@ -108,6 +108,13 @@ export interface TableInfo {
   columns: ColumnInfo[]
 }
 
+/** A relation's name only: what the sidebar filter searches in databases whose schema hasn't loaded. */
+export interface TableName {
+  schema: string
+  name: string
+  kind: RelationKind
+}
+
 export interface EnumInfo {
   schema: string
   name: string

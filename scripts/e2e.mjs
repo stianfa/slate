@@ -98,6 +98,21 @@ async function launch() {
   return { app, page }
 }
 
+// A database the steps never open, so "Search all databases" has a table to find.
+const pg = require('pg')
+async function admin(sql, database = 'postgres') {
+  const client = new pg.Client({ host: 'localhost', port: Number(port), user: 'slate', password: 'slate', database })
+  await client.connect()
+  try {
+    return await client.query(sql)
+  } finally {
+    await client.end()
+  }
+}
+await admin('DROP DATABASE IF EXISTS e2e_archive WITH (FORCE)')
+await admin('CREATE DATABASE e2e_archive')
+await admin('CREATE TABLE legacy_invoices (id int PRIMARY KEY, total numeric)', 'e2e_archive')
+
 let { app, page } = await launch()
 
 const step = async (name, fn) => {
@@ -887,8 +902,70 @@ try {
 
     await page.keyboard.press(`${mod}+Shift+F`)
     if (!(await page.locator('.sidebar .sidebar-search input').evaluate((el) => el === document.activeElement))) {
-      throw new Error('the table filter is not focused')
+      throw new Error('the sidebar filter is not focused')
     }
+  })
+
+  await step('filter databases and tables in the sidebar', async () => {
+    const filter = page.locator('.sidebar .sidebar-search input')
+    const database = (name) => page.locator('.tree-row.database', { hasText: new RegExp(`^${name}`) })
+
+    // A table name finds its database, open on just the matching tables.
+    await filter.fill('order')
+    await page.locator('.tree-row', { hasText: /^order_items/ }).waitFor()
+    await page.locator('.tree-row', { hasText: /^users/ }).waitFor({ state: 'detached' })
+    await database('scratch').waitFor({ state: 'detached' })
+    await database('postgres').waitFor({ state: 'detached' })
+    await database('shop').locator('.tree-meta', { hasText: / of / }).waitFor()
+    await page.locator('.tree-match', { hasText: 'order' }).first().waitFor()
+    await shot('19b-sidebar-filter')
+
+    // What the filter opens can still be folded, until the filter changes.
+    const orderItems = page.locator('.tree-row', { hasText: /^order_items/ })
+    await database('shop').click()
+    await orderItems.waitFor({ state: 'detached' })
+    await database('shop').click()
+    await orderItems.waitFor()
+    await filter.fill('event')
+    const events = page.locator('.tree-row', { hasText: /^events/ })
+    await events.waitFor()
+    await page.locator('.tree-row.schema', { hasText: 'analytics' }).click()
+    await events.waitFor({ state: 'detached' })
+    await filter.fill('events')
+    await events.waitFor()
+
+    // A database name finds the database, and the one you are in stays even without a match.
+    await filter.fill('scra')
+    await database('scratch').waitFor()
+    await database('postgres').waitFor({ state: 'detached' })
+    await database('shop').waitFor()
+    await page.locator('.tree-note', { hasText: 'No matching tables' }).waitFor()
+
+    // A table in a database you haven't opened is found once its names are fetched.
+    await filter.fill('invoice')
+    await database('e2e_archive').waitFor({ state: 'detached' })
+    const hint = page.locator('.tree-hint')
+    await hint.getByRole('button', { name: 'Search all databases' }).click()
+    const invoices = page.locator('.tree-row', { hasText: /^legacy_invoices/ })
+    await invoices.waitFor()
+    await database('e2e_archive').locator('.tree-meta', { hasText: '1 of 1' }).waitFor()
+    await hint.waitFor({ state: 'detached' })
+    await shot('19c-sidebar-search-all')
+    // The search's own connection is gone again; only expanding a table opens the usual pool.
+    const slateSessions = async () =>
+      (await admin("SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = 'e2e_archive' AND application_name = 'Slate'"))
+        .rows[0].n
+    for (let i = 0; (await slateSessions()) > 0; i++) {
+      if (i === 20) throw new Error('the search left a connection to e2e_archive open')
+      await page.waitForTimeout(100)
+    }
+    // Only the name is known until the table is expanded, which loads the schema.
+    await invoices.click()
+    await page.locator('.tree-row.column', { hasText: /^total/ }).waitFor()
+
+    await filter.fill('')
+    await database('postgres').waitFor()
+    await page.locator('.tree-row', { hasText: /^users/ }).waitFor()
   })
 
   await step('format SQL', async () => {
@@ -960,6 +1037,7 @@ try {
   process.exitCode = 1
 } finally {
   await app.close()
+  await admin('DROP DATABASE IF EXISTS e2e_archive WITH (FORCE)').catch(() => {})
   mock.close()
   rmSync(userData, { recursive: true, force: true })
   rmSync(downloads, { recursive: true, force: true })

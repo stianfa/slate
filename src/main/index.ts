@@ -135,6 +135,7 @@ function registerIpc() {
     connect: (id) => manager.connect(id),
     disconnect: (id) => manager.disconnect(id),
     getSchema: (target, refresh) => manager.schema(target, refresh),
+    listTableNames: (target) => manager.tableNames(target),
     runQuery: (tabId, target, sql, rowLimit, variables, options) =>
       manager.run(tabId, target, sql, rowLimit, variables, options),
     applyChanges: (tabId, target, changes) => manager.applyChanges(tabId, target, changes),
