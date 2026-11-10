@@ -9,6 +9,7 @@ import type {
   ServerInfo,
   Settings,
   SettingsInput,
+  TableName,
   Target,
   TestResult
 } from './types'
@@ -24,6 +25,8 @@ export interface Api {
   connect(id: string): Promise<ServerInfo>
   disconnect(id: string): Promise<void>
   getSchema(target: Target, refresh: boolean): Promise<SchemaInfo>
+  /** Only the table names, on a connection that closes right after, for searching unopened databases. */
+  listTableNames(target: Target): Promise<TableName[]>
   runQuery(
     tabId: string,
     target: Target,
@@ -70,6 +73,7 @@ export const API_METHODS: (keyof Api)[] = [
   'connect',
   'disconnect',
   'getSchema',
+  'listTableNames',
   'runQuery',
   'applyChanges',
   'cancelQuery',

@@ -18,6 +18,7 @@ import {
   type SslMode,
   type StatementResult,
   type TableInfo,
+  type TableName,
   type Target,
   type TxStatus
 } from '@shared/types'
@@ -54,6 +55,15 @@ const RELATION_KINDS: Record<string, RelationKind> = {
   m: 'materialized view',
   f: 'foreign table'
 }
+
+/** How long, in milliseconds, the sidebar's table-name search waits for one database. */
+const NAMES_TIMEOUT = 15_000
+
+/** The relations the schema browser lists, from `pg_class c` joined to `pg_namespace n`. */
+const LISTED_RELATIONS = `c.relkind IN ('r', 'p', 'v', 'm', 'f')
+           AND NOT c.relispartition
+           AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+           AND n.nspname NOT LIKE 'pg\\_toast%' AND n.nspname NOT LIKE 'pg\\_temp%'`
 
 function sslOption(mode: SslMode): pg.ClientConfig['ssl'] {
   if (mode === 'disable') return false
@@ -194,6 +204,37 @@ export class DbManager {
     return this.schemas.get(targetKey(target))
   }
 
+  /**
+   * Only the names of a database's tables, for the sidebar filter to search databases you haven't opened.
+   * It uses its own connection, closed straight after, rather than keeping a pool open for every database.
+   * The server-side limit is a SET LOCAL inside a read-only transaction rather than a startup parameter,
+   * which PgBouncer can refuse and which would outlive the query under transaction pooling; the client-side
+   * `query_timeout` also ends the wait when the connection drops silently.
+   */
+  async tableNames(target: Target): Promise<TableName[]> {
+    const client = new pg.Client({ ...this.config(target), query_timeout: NAMES_TIMEOUT + 5_000 })
+    client.on('error', () => {})
+    try {
+      await client.connect()
+      // One round trip: several statements in a simple query give one result each.
+      const results = (await client.query(
+        `BEGIN READ ONLY;
+         SET LOCAL statement_timeout = ${NAMES_TIMEOUT};
+         SELECT n.nspname AS schema, c.relname AS name, c.relkind AS kind
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE ${LISTED_RELATIONS}
+         ORDER BY n.nspname, c.relname;
+         COMMIT`
+      )) as unknown as pg.QueryResult<{ schema: string; name: string; kind: string }>[]
+      return results[2].rows.map((r) => ({ schema: r.schema, name: r.name, kind: RELATION_KINDS[r.kind] ?? 'table' }))
+    } catch (e) {
+      throw new Error(explainConnectError((e as Error).message || String(e)))
+    } finally {
+      client.end().catch(() => {})
+    }
+  }
+
   async schema(target: Target, refresh = false): Promise<SchemaInfo> {
     const key = targetKey(target)
     const cached = this.schemas.get(key)
@@ -220,10 +261,7 @@ export class DbManager {
          JOIN pg_namespace n ON n.oid = c.relnamespace
          LEFT JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
          LEFT JOIN pg_attrdef d ON d.adrelid = c.oid AND d.adnum = a.attnum
-         WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
-           AND NOT c.relispartition
-           AND n.nspname NOT IN ('pg_catalog', 'information_schema')
-           AND n.nspname NOT LIKE 'pg\\_toast%' AND n.nspname NOT LIKE 'pg\\_temp%'
+         WHERE ${LISTED_RELATIONS}
          ORDER BY n.nspname, c.relname, a.attnum`
       ),
       pool.query<{
